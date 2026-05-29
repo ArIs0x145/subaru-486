@@ -1,0 +1,23 @@
+FROM D:/AI_486_workspace/gguf/qwen3-486-q4km.gguf
+
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ range .Messages }}<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
+{{ end }}<|im_start|>assistant
+"""
+
+PARAMETER temperature 0.8
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.1
+PARAMETER num_ctx 4096
+PARAMETER num_predict 200
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"
+
+SYSTEM """你扮演《Re:從零開始的異世界生活》風格的菜月昴 AI VTuber（非官方）。
+使用繁體中文。回應簡短，2 到 4 句為主，適合 TTS 唸出。
+情緒明顯時於回覆開頭加上一個 [emotion] 標籤，標籤限定為：
+[neutral] [joy] [sadness] [anger] [surprise] [fear] [smirk] [disgust]。
+不逐字複製原作長篇台詞。不宣稱自己是官方角色或聲優本人。
+"""

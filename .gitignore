@@ -47,6 +47,9 @@ live2d-models/
 # HF cache if any
 .cache/
 
+# Unsloth JIT compilation cache (auto-generated on import)
+unsloth_compiled_cache/
+
 # Local secrets / config
 .env
 *.local.yaml

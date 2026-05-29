@@ -33,100 +33,145 @@ Qwen3-4B 4-bit 訓練峰值約 6.5–7.5GB VRAM；同卡上同時跑 ASR/TTS/Liv
 
 | 元件 | 版本基準 |
 | --- | --- |
-| Python | 3.11.x（避免 3.12 對某些 wheel 的相容問題） |
-| CUDA Toolkit | 12.4 或系統 driver 對應版本 |
-| PyTorch | 2.4+ with CUDA 12.4 |
+| 套件管理 | uv 0.10+ |
+| Python | 3.12.x（uv managed；ML stack 在 3.12 上相容最廣，3.13 在 2026/5 仍踩 pyarrow / torchaudio cu13x cp313 wheel 缺口） |
+| CUDA runtime（GPU driver） | 12.4+ 即可，本機 driver 報 13.2 向下相容 |
+| PyTorch | 最新支援 cp312 的 cu12x wheel（2026/5 為 cu128） |
 | Unsloth | 最新 stable |
 | transformers | 4.46+ |
 | trl | 0.12+ |
-| bitsandbytes | 0.44+（Windows 有官方 wheel） |
-| llama.cpp | 從 main 分支編譯或下載最新 release |
+| bitsandbytes | 0.44+（Windows 官方 wheel） |
+| llama.cpp | 官方最新 release（Windows 預編譯 binary） |
 | Ollama | 0.4+ |
 | Open LLM VTuber | main 分支最新 commit |
 
 ### 2.3 目錄佈局建議
 
+git repo 放在 S:\AI_486\，大檔工作區放 D:\AI_486_workspace\。理由：S: 空間有限（約 25GB 可用），訓練流程的中間檔（base model、merged fp16、GGUF f16）峰值會超過 30GB，全部塞 D: 比較安全。
+
 ```
-S:\AI_486\
+S:\AI_486\                            # git repo
+├── .venv\                            # uv + Python 3.12（.gitignore）
 ├── 486Dataset.jsonL                  # 原始資料
 ├── converted_dataset\                # 已轉換、已切分
+├── data\                             # 縮短 system 後的 train/eval
 ├── PROJECT_ARCHITECTURE.md
 ├── FINETUNING_DETAIL_REPORT.md
 ├── EXECUTION_RUNBOOK.md              # 本文件
-├── train\                            # (待建) 訓練工作區
-│   ├── venv\
-│   ├── train_qwen3_486.py
-│   └── outputs\
-│       ├── lora\                     # LoRA adapter
-│       └── merged\                   # 合併後 HF 模型
-├── gguf\                             # (待建) GGUF 產物
-│   └── qwen3-486-q4km.gguf
+├── prep_training_data.py
+├── train_qwen3_486.py
+├── merge_lora.py
+├── .gitignore
 └── deploy\
-    ├── Modelfile
-    └── persona.txt
+    └── Modelfile
+
+D:\AI_486_workspace\                  # 大檔工作區（不入 git）
+├── hf_cache\                         # HuggingFace 下載快取（base 模型）
+├── train_outputs\
+│   ├── lora\                         # LoRA adapter
+│   └── merged\                       # 合併後 HF 模型
+├── gguf\                             # GGUF 產物（f16 中間檔 + Q4_K_M）
+└── app\                              # Open LLM VTuber clone（另一個 repo）
+    └── live2d-models\chitose\        # Live2D 素材
+
+D:\tools\
+└── llama.cpp\                        # GGUF 轉換工具
 ```
+
+HuggingFace 下載快取透過環境變數導到 D：`HF_HOME=D:\AI_486_workspace\hf_cache`（見 §3.4）。
 
 ## 3. 環境準備
 
-### 3.1 安裝 Python 3.11
-
-從 python.org 下載 Python 3.11.x 安裝，安裝時勾選「Add to PATH」。
-
-驗證：
-
-```powershell
-python --version
-# Python 3.11.x
-```
-
-### 3.2 建立訓練 venv
-
-```powershell
-mkdir S:\AI_486\train
-cd S:\AI_486\train
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-```
-
-PowerShell 若禁止執行腳本，先在系統管理員 PowerShell 跑：
+工具基礎：uv（已裝 0.10.8）。整套環境用 uv 管理 Python 與套件。
+PowerShell 若禁止執行腳本，先一次性開放：
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
-### 3.3 安裝 PyTorch（CUDA 12.4）
+### 3.1 建立 venv（uv + Python 3.12）
 
 ```powershell
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+cd S:\AI_486
+uv venv --python 3.12 .venv
+.\.venv\Scripts\Activate.ps1
 ```
+
+uv 會自動 managed cpython-3.12，不需要 PATH 上的系統 Python。
+
+驗證：
+
+```powershell
+python -V
+# Python 3.12.x
+```
+
+避雷說明：本專案不用 Python 3.13。原因——`pyarrow 24` 在 Windows + Python 3.13 上 import 時 access violation 直接 crash 整個 Python（datasets 一載入就死）；torchaudio 在 cu130/cu132 上沒 cp313 wheel；transformers 5.x 在 3.13 上撞 peft 的 `BloomPreTrainedModel` 找不到。3.12 是當前 ML stack 完整支援的最新版本。
+
+### 3.2 設定 HuggingFace 快取到 D:
+
+避免 base model（約 4GB）下載到 C:\Users\<user>\.cache：
+
+```powershell
+# 一次性（當前 session）
+$env:HF_HOME = "D:\AI_486_workspace\hf_cache"
+
+# 永久（使用者層級）
+[System.Environment]::SetEnvironmentVariable("HF_HOME", "D:\AI_486_workspace\hf_cache", "User")
+```
+
+設完後**重新開 PowerShell**讓永久設定生效。
+
+### 3.3 安裝 PyTorch（CUDA 12.4 wheel）
+
+在已 activate 的 venv 內，PyTorch 官方 CUDA channel 選最新支援 cp312 的版本（2026/5 為 cu128；若 cu128 解不開可退 cu126 / cu124）：
+
+```powershell
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+driver 610+ 與 CUDA 13.x runtime 向下相容 cu12x wheel，不需要降 driver。
 
 驗證 CUDA 可用：
 
 ```powershell
-python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-# True NVIDIA GeForce RTX xxxx
+python -c "import torch; print('cuda:', torch.cuda.is_available()); print('device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
+# cuda: True
+# device: NVIDIA GeForce RTX 4060 ...
 ```
 
-若回傳 `False`，先處理 NVIDIA driver 與 CUDA toolkit，再回來。
+回傳 `False`：先處理 NVIDIA driver，再回來。
 
 ### 3.4 安裝 Unsloth 與相依
 
-Windows 原生：
+```powershell
+uv pip install unsloth
+uv pip install datasets "trl<0.20.0" peft accelerate bitsandbytes
+```
+
+`unsloth` 從 pypi 安裝會自動拉 transformers / unsloth_zoo / numpy 等相依，版本由 unsloth 鎖定。
+
+**重要踩雷**：`uv pip install unsloth` 在解析依賴時會把先前的 cu128 torch 降回 pypi 預設的 **CPU 版 torch 2.10.0**，造成 unsloth 啟動時報「cannot find any torch accelerator」。**必須在 unsloth 裝完後強制重裝 GPU torch**：
 
 ```powershell
-pip install "unsloth[windows] @ git+https://github.com/unslothai/unsloth.git"
-pip install --no-deps "trl<0.20.0" peft accelerate bitsandbytes
-pip install datasets
+uv pip install --reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
-WSL / Linux：
+uv 快取會命中，秒裝。完成後最終驗證：
 
-```bash
-pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-pip install --no-deps "trl<0.20.0" peft accelerate bitsandbytes
-pip install datasets
+```powershell
+python -c "import torch; print('cuda:', torch.cuda.is_available()); print('torch:', torch.__version__)"
+# cuda: True
+# torch: 2.11.0+cu128
+
+python -c "from unsloth import FastLanguageModel; print('UNSLOTH OK')"
+# (may print Flash Attention 2 warning - safe, fallbacks to Xformers)
+# UNSLOTH OK
 ```
+
+如需 git main 版（追最新 patch）：先驗 pypi 版能 import，再 `uv pip install -U "unsloth @ git+https://github.com/unslothai/unsloth.git"`，記得再 reinstall 一次 torch cu128。
+
+`unsloth` 從 pypi 安裝會自動拉 `transformers`、`unsloth_zoo`、`peft` 等相容版本；不要用 `--no-deps`，否則會缺 `transformers` 或拉到不相容版本（實測 trl/peft + transformers 5.x 會撞牆）。
 
 驗證：
 
@@ -136,28 +181,41 @@ python -c "from unsloth import FastLanguageModel; print('unsloth OK')"
 
 ### 3.5 安裝 Ollama
 
-從 ollama.com/download 下載 Windows 安裝檔，安裝後 Ollama 會以服務形式背景執行。
+從 https://ollama.com/download/OllamaSetup.exe 下載並執行安裝程式。安裝後 Ollama 以系統服務常駐。
 
-驗證：
+驗證（裝完開**新**的 PowerShell 視窗，舊視窗 PATH 沒更新）：
 
 ```powershell
 ollama --version
+# ollama version is 0.24+
+
 ollama list
+# (empty until §7 imports the quantized model)
+
+curl http://localhost:11434/api/tags
+# {"models":[]}
 ```
 
-### 3.6 取得 llama.cpp
+若新 PowerShell 也找不到 ollama，但 `Test-Path "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"` 為 True，表示 installer 沒 update PATH；可手動加入或登出/登入。
 
-選一個常駐位置，例如 `S:\tools\llama.cpp`：
+### 3.6 取得 llama.cpp（Windows 預編譯 release）
+
+不用自編譯，直接抓官方 Windows release。
+
+1. 開瀏覽器到 https://github.com/ggml-org/llama.cpp/releases
+2. 找最新的 `llama-bXXXX-bin-win-cuda-cu12.x-x64.zip`（CUDA 版，速度比 cpu 快）
+3. 解壓到 `D:\tools\llama.cpp\`，裡面應該有 `llama-quantize.exe`、`llama-cli.exe` 等
+
+`convert_hf_to_gguf.py` 不在 release 包內，從原始碼倉抓即可：
 
 ```powershell
-cd S:\tools
-git clone https://github.com/ggerganov/llama.cpp
-cd llama.cpp
-pip install -r requirements.txt
+mkdir D:\tools\llama.cpp-src
+cd D:\tools\llama.cpp-src
+git clone --depth 1 https://github.com/ggml-org/llama.cpp .
+uv pip install -r requirements.txt
 ```
 
-只需要 `convert_hf_to_gguf.py` 與 `llama-quantize` 兩個工具。
-`llama-quantize` 可從官方 release 下載 pre-built Windows binary，省去自編譯。
+只用 `convert_hf_to_gguf.py` 那支腳本；其他編譯步驟跳過。
 
 ## 4. 資料準備
 
@@ -188,7 +246,7 @@ converted_dataset\486_messages_live2d_emotions_eval.jsonl
 
 完整菜月昴人設留到部署時的 Open LLM VTuber 角色設定（見 8.3）。
 
-可寫一個一次性處理腳本 `prep_training_data.py`：
+可寫一個一次性處理腳本 `S:\AI_486\prep_training_data.py`：
 
 ```python
 import json
@@ -206,7 +264,7 @@ def rewrite(src, dst):
             f_out.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
 base = Path(r"S:\AI_486\converted_dataset")
-out = Path(r"S:\AI_486\train\data")
+out = Path(r"S:\AI_486\data")
 out.mkdir(parents=True, exist_ok=True)
 
 rewrite(base / "486_messages_live2d_emotions_train.jsonl",
@@ -220,7 +278,8 @@ print("done")
 執行：
 
 ```powershell
-cd S:\AI_486\train
+cd S:\AI_486
+.\.venv\Scripts\Activate.ps1
 python prep_training_data.py
 ```
 
@@ -245,7 +304,7 @@ python prep_training_data.py
 
 ### 5.1 訓練腳本
 
-於 `S:\AI_486\train\train_qwen3_486.py` 建立。
+於 `S:\AI_486\train_qwen3_486.py` 建立。
 以下為骨架，trl / unsloth API 隨版本演進，若安裝版本與下方註解版本不同，請依該版本官方範例微調 `SFTConfig` 欄位名稱：
 
 ```python
@@ -258,8 +317,8 @@ from trl import SFTTrainer, SFTConfig
 
 MODEL_NAME = "unsloth/Qwen3-4B-Instruct-2507-bnb-4bit"
 MAX_SEQ_LEN = 1024
-OUTPUT_DIR = r"S:\AI_486\train\outputs\lora"
-DATA_DIR = Path(r"S:\AI_486\train\data")
+OUTPUT_DIR = r"D:\AI_486_workspace\train_outputs\lora"
+DATA_DIR = Path(r"S:\AI_486\data")
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL_NAME,
@@ -326,8 +385,8 @@ print("LoRA saved to", OUTPUT_DIR)
 ### 5.2 啟動訓練
 
 ```powershell
-cd S:\AI_486\train
-.\venv\Scripts\Activate.ps1
+cd S:\AI_486
+.\.venv\Scripts\Activate.ps1
 python train_qwen3_486.py
 ```
 
@@ -348,7 +407,7 @@ from unsloth.chat_templates import get_chat_template
 import torch
 
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=r"S:\AI_486\train\outputs\lora",
+    model_name=r"D:\AI_486_workspace\train_outputs\lora",
     max_seq_length=1024,
     load_in_4bit=True,
 )
@@ -377,19 +436,19 @@ print(tokenizer.decode(out[0][inputs.shape[1]:], skip_special_tokens=True))
 
 ### 6.1 合併 LoRA 到 base
 
-於同個 venv 建立 `merge_lora.py`：
+於同個 venv 建立 `S:\AI_486\merge_lora.py`：
 
 ```python
 from unsloth import FastLanguageModel
 
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=r"S:\AI_486\train\outputs\lora",
+    model_name=r"D:\AI_486_workspace\train_outputs\lora",
     max_seq_length=1024,
     load_in_4bit=False,
     dtype=None,
 )
 
-OUT = r"S:\AI_486\train\outputs\merged"
+OUT = r"D:\AI_486_workspace\train_outputs\merged"
 model.save_pretrained_merged(OUT, tokenizer, save_method="merged_16bit")
 print("merged ->", OUT)
 ```
@@ -397,6 +456,8 @@ print("merged ->", OUT)
 執行：
 
 ```powershell
+cd S:\AI_486
+.\.venv\Scripts\Activate.ps1
 python merge_lora.py
 ```
 
@@ -405,8 +466,9 @@ python merge_lora.py
 ### 6.2 轉換為 GGUF
 
 ```powershell
-cd S:\tools\llama.cpp
-python convert_hf_to_gguf.py S:\AI_486\train\outputs\merged --outfile S:\AI_486\gguf\qwen3-486-f16.gguf --outtype f16
+mkdir D:\AI_486_workspace\gguf -Force
+cd D:\tools\llama.cpp-src
+python convert_hf_to_gguf.py D:\AI_486_workspace\train_outputs\merged --outfile D:\AI_486_workspace\gguf\qwen3-486-f16.gguf --outtype f16
 ```
 
 產出約 8GB 的 f16 GGUF。
@@ -414,10 +476,10 @@ python convert_hf_to_gguf.py S:\AI_486\train\outputs\merged --outfile S:\AI_486\
 ### 6.3 量化為 Q4_K_M
 
 ```powershell
-.\build\bin\Release\llama-quantize.exe S:\AI_486\gguf\qwen3-486-f16.gguf S:\AI_486\gguf\qwen3-486-q4km.gguf Q4_K_M
+D:\tools\llama.cpp\llama-quantize.exe D:\AI_486_workspace\gguf\qwen3-486-f16.gguf D:\AI_486_workspace\gguf\qwen3-486-q4km.gguf Q4_K_M
 ```
 
-產出約 2.5GB 的 Q4_K_M GGUF。
+產出約 2.5GB 的 Q4_K_M GGUF。量化完成後 `qwen3-486-f16.gguf`（中間檔）可刪除釋放 ~8GB。
 
 量化選項比較：
 
@@ -431,7 +493,7 @@ python convert_hf_to_gguf.py S:\AI_486\train\outputs\merged --outfile S:\AI_486\
 驗證 GGUF 可載：
 
 ```powershell
-.\build\bin\Release\llama-cli.exe -m S:\AI_486\gguf\qwen3-486-q4km.gguf -p "你好" -n 64
+D:\tools\llama.cpp\llama-cli.exe -m D:\AI_486_workspace\gguf\qwen3-486-q4km.gguf -p "你好" -n 64
 ```
 
 ## 7. 部署到 Ollama
@@ -441,7 +503,7 @@ python convert_hf_to_gguf.py S:\AI_486\train\outputs\merged --outfile S:\AI_486\
 `S:\AI_486\deploy\Modelfile`：
 
 ```
-FROM S:\AI_486\gguf\qwen3-486-q4km.gguf
+FROM D:/AI_486_workspace/gguf/qwen3-486-q4km.gguf
 
 TEMPLATE """{{ if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
@@ -496,28 +558,21 @@ curl http://localhost:11434/v1/chat/completions `
 
 ### 8.1 安裝
 
-選一個位置例如 `S:\AI_486\app`：
+clone 到 D: 工作區：
 
 ```powershell
-cd S:\AI_486
+cd D:\AI_486_workspace
 git clone https://github.com/Open-LLM-VTuber/Open-LLM-VTuber.git app
 cd app
 ```
 
-依官方 README，建議用 `uv`：
+依官方 README 用 `uv`（已裝過）：
 
 ```powershell
-pip install uv
 uv sync
 ```
 
-或傳統：
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+`uv sync` 會根據專案內 `pyproject.toml` / `uv.lock` 建立自己的 `.venv` 並裝齊相依。Open LLM VTuber 與 S:\AI_486\.venv 是兩個獨立的 venv，互不干擾。
 
 ### 8.2 LLM 設定（`conf.yaml`）
 
@@ -562,11 +617,11 @@ Open LLM VTuber 送 chat 時若已帶 system，會覆寫 Modelfile 的預設 SYS
 
 1. 將 `C:\Users\chenb\Downloads\chitose\runtime\` 整個資料夾複製到：
    ```
-   S:\AI_486\app\live2d-models\chitose\
+   D:\AI_486_workspace\app\live2d-models\chitose\
    ```
    裡面應直接看到 `chitose.model3.json` 等檔案，不要多包一層資料夾。
 
-2. 編輯 `S:\AI_486\app\live2d-models\model_dict.json`，追加項目。`emotionMap` 的 value 為 `chitose.model3.json` 中 Expressions 陣列的 index（從 0 起算）。
+2. 編輯 `D:\AI_486_workspace\app\live2d-models\model_dict.json`，追加項目。`emotionMap` 的 value 為 `chitose.model3.json` 中 Expressions 陣列的 index（從 0 起算）。
 
    實際讀取 `chitose.model3.json` 確認 Expressions 順序（依 `PROJECT_ARCHITECTURE.md` 9.1 的清單，常見順序如下）：
 
@@ -651,11 +706,8 @@ edge-tts 免費且不需本地 GPU 資源。第二版可換 GPT-SoVITS 或 CosyV
 ### 8.7 啟動
 
 ```powershell
-cd S:\AI_486\app
-# 若用 uv：
+cd D:\AI_486_workspace\app
 uv run python run_server.py
-# 或啟動 venv 後：
-python run_server.py
 ```
 
 預期：
@@ -735,7 +787,7 @@ python run_server.py
 
 - 升級 Ollama 到 0.4+。
 - 確認 Modelfile 的 `FROM` 路徑是絕對路徑且檔案存在。
-- 若 Modelfile 用 Windows 反斜線路徑出錯，改用正斜線 `S:/AI_486/gguf/qwen3-486-q4km.gguf`。
+- Modelfile 已採正斜線 `D:/AI_486_workspace/gguf/qwen3-486-q4km.gguf`，若仍報錯改絕對 Windows 路徑 `D:\AI_486_workspace\gguf\qwen3-486-q4km.gguf` 重試。
 
 ### 10.4 Open LLM VTuber 連不到 LLM
 
@@ -803,7 +855,7 @@ python run_server.py
 
 - [ ] `train_qwen3_486.py` 跑完 2 epoch 不 OOM。
 - [ ] eval loss 結束時低於 epoch 0。
-- [ ] `outputs/lora/` 內含 adapter 檔。
+- [ ] `D:\AI_486_workspace\train_outputs\lora\` 內含 adapter 檔。
 - [ ] 5.3 推論測試輸出符合通過條件。
 
 ### 11.4 部署
