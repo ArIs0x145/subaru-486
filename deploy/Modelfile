@@ -1,4 +1,4 @@
-FROM D:/AI_486_workspace/gguf/qwen3-486-q4km.gguf
+FROM D:/AI_486/gguf/qwen3-486-q4km.gguf
 
 TEMPLATE """{{ if .System }}<|im_start|>system
 {{ .System }}<|im_end|>

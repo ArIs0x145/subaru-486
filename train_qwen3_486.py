@@ -12,8 +12,8 @@ from trl import SFTTrainer, SFTConfig
 
 MODEL_NAME = "unsloth/Qwen3-4B-Instruct-2507-bnb-4bit"
 MAX_SEQ_LEN = 1024
-OUTPUT_DIR = r"D:\AI_486_workspace\train_outputs\lora"
-DATA_DIR = Path(r"S:\AI_486\data")
+OUTPUT_DIR = r"D:\AI_486\train_outputs\lora"
+DATA_DIR = Path(r"D:\AI_486\data")
 
 
 def main() -> None:

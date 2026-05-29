@@ -47,11 +47,13 @@ Qwen3-4B 4-bit 訓練峰值約 6.5–7.5GB VRAM；同卡上同時跑 ASR/TTS/Liv
 
 ### 2.3 目錄佈局建議
 
-git repo 放在 S:\AI_486\，大檔工作區放 D:\AI_486_workspace\。理由：S: 空間有限（約 25GB 可用），訓練流程的中間檔（base model、merged fp16、GGUF f16）峰值會超過 30GB，全部塞 D: 比較安全。
+整個專案統一在 `D:\AI_486\` 一個根目錄下。`.gitignore` 排除大檔（venv、HF 快取、訓練輸出、GGUF、Open LLM VTuber clone），git repo 本身只追蹤程式碼、資料、文件。
 
 ```
-S:\AI_486\                            # git repo
-├── .venv\                            # uv + Python 3.12（.gitignore）
+D:\AI_486\                            # repo 根目錄
+├── .git\
+├── .gitignore
+├── .venv\                            # uv + Python 3.12（gitignored）
 ├── 486Dataset.jsonL                  # 原始資料
 ├── converted_dataset\                # 已轉換、已切分
 ├── data\                             # 縮短 system 後的 train/eval
@@ -61,24 +63,24 @@ S:\AI_486\                            # git repo
 ├── prep_training_data.py
 ├── train_qwen3_486.py
 ├── merge_lora.py
-├── .gitignore
-└── deploy\
-    └── Modelfile
-
-D:\AI_486_workspace\                  # 大檔工作區（不入 git）
-├── hf_cache\                         # HuggingFace 下載快取（base 模型）
-├── train_outputs\
+├── deploy\
+│   └── Modelfile
+├── docs\superpowers\
+│   ├── specs\
+│   └── plans\
+├── hf_cache\                         # gitignored，HuggingFace 下載快取（base 模型）
+├── train_outputs\                    # gitignored
 │   ├── lora\                         # LoRA adapter
 │   └── merged\                       # 合併後 HF 模型
-├── gguf\                             # GGUF 產物（f16 中間檔 + Q4_K_M）
-└── app\                              # Open LLM VTuber clone（另一個 repo）
+├── gguf\                             # gitignored，GGUF 產物
+└── app\                              # gitignored，Open LLM VTuber clone（另一個 repo）
     └── live2d-models\chitose\        # Live2D 素材
 
 D:\tools\
-└── llama.cpp\                        # GGUF 轉換工具
+└── llama.cpp\                        # GGUF 轉換工具（與 repo 分開放）
 ```
 
-HuggingFace 下載快取透過環境變數導到 D：`HF_HOME=D:\AI_486_workspace\hf_cache`（見 §3.4）。
+HuggingFace 下載快取透過環境變數導到 repo 內：`HF_HOME=D:\AI_486\hf_cache`（見 §3.2）。
 
 ## 3. 環境準備
 
@@ -92,7 +94,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ### 3.1 建立 venv（uv + Python 3.12）
 
 ```powershell
-cd S:\AI_486
+cd D:\AI_486
 uv venv --python 3.12 .venv
 .\.venv\Scripts\Activate.ps1
 ```
@@ -114,10 +116,10 @@ python -V
 
 ```powershell
 # 一次性（當前 session）
-$env:HF_HOME = "D:\AI_486_workspace\hf_cache"
+$env:HF_HOME = "D:\AI_486\hf_cache"
 
 # 永久（使用者層級）
-[System.Environment]::SetEnvironmentVariable("HF_HOME", "D:\AI_486_workspace\hf_cache", "User")
+[System.Environment]::SetEnvironmentVariable("HF_HOME", "D:\AI_486\hf_cache", "User")
 ```
 
 設完後**重新開 PowerShell**讓永久設定生效。
@@ -246,7 +248,7 @@ converted_dataset\486_messages_live2d_emotions_eval.jsonl
 
 完整菜月昴人設留到部署時的 Open LLM VTuber 角色設定（見 8.3）。
 
-可寫一個一次性處理腳本 `S:\AI_486\prep_training_data.py`：
+可寫一個一次性處理腳本 `D:\AI_486\prep_training_data.py`：
 
 ```python
 import json
@@ -263,8 +265,8 @@ def rewrite(src, dst):
                     m["content"] = SHORT_SYSTEM
             f_out.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
-base = Path(r"S:\AI_486\converted_dataset")
-out = Path(r"S:\AI_486\data")
+base = Path(r"D:\AI_486\converted_dataset")
+out = Path(r"D:\AI_486\data")
 out.mkdir(parents=True, exist_ok=True)
 
 rewrite(base / "486_messages_live2d_emotions_train.jsonl",
@@ -278,7 +280,7 @@ print("done")
 執行：
 
 ```powershell
-cd S:\AI_486
+cd D:\AI_486
 .\.venv\Scripts\Activate.ps1
 python prep_training_data.py
 ```
@@ -304,7 +306,7 @@ python prep_training_data.py
 
 ### 5.1 訓練腳本
 
-於 `S:\AI_486\train_qwen3_486.py` 建立。
+於 `D:\AI_486\train_qwen3_486.py` 建立。
 以下為骨架，trl / unsloth API 隨版本演進，若安裝版本與下方註解版本不同，請依該版本官方範例微調 `SFTConfig` 欄位名稱：
 
 ```python
@@ -317,8 +319,8 @@ from trl import SFTTrainer, SFTConfig
 
 MODEL_NAME = "unsloth/Qwen3-4B-Instruct-2507-bnb-4bit"
 MAX_SEQ_LEN = 1024
-OUTPUT_DIR = r"D:\AI_486_workspace\train_outputs\lora"
-DATA_DIR = Path(r"S:\AI_486\data")
+OUTPUT_DIR = r"D:\AI_486\train_outputs\lora"
+DATA_DIR = Path(r"D:\AI_486\data")
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL_NAME,
@@ -385,7 +387,7 @@ print("LoRA saved to", OUTPUT_DIR)
 ### 5.2 啟動訓練
 
 ```powershell
-cd S:\AI_486
+cd D:\AI_486
 .\.venv\Scripts\Activate.ps1
 python train_qwen3_486.py
 ```
@@ -407,7 +409,7 @@ from unsloth.chat_templates import get_chat_template
 import torch
 
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=r"D:\AI_486_workspace\train_outputs\lora",
+    model_name=r"D:\AI_486\train_outputs\lora",
     max_seq_length=1024,
     load_in_4bit=True,
 )
@@ -436,19 +438,19 @@ print(tokenizer.decode(out[0][inputs.shape[1]:], skip_special_tokens=True))
 
 ### 6.1 合併 LoRA 到 base
 
-於同個 venv 建立 `S:\AI_486\merge_lora.py`：
+於同個 venv 建立 `D:\AI_486\merge_lora.py`：
 
 ```python
 from unsloth import FastLanguageModel
 
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=r"D:\AI_486_workspace\train_outputs\lora",
+    model_name=r"D:\AI_486\train_outputs\lora",
     max_seq_length=1024,
     load_in_4bit=False,
     dtype=None,
 )
 
-OUT = r"D:\AI_486_workspace\train_outputs\merged"
+OUT = r"D:\AI_486\train_outputs\merged"
 model.save_pretrained_merged(OUT, tokenizer, save_method="merged_16bit")
 print("merged ->", OUT)
 ```
@@ -456,7 +458,7 @@ print("merged ->", OUT)
 執行：
 
 ```powershell
-cd S:\AI_486
+cd D:\AI_486
 .\.venv\Scripts\Activate.ps1
 python merge_lora.py
 ```
@@ -466,9 +468,9 @@ python merge_lora.py
 ### 6.2 轉換為 GGUF
 
 ```powershell
-mkdir D:\AI_486_workspace\gguf -Force
+mkdir D:\AI_486\gguf -Force
 cd D:\tools\llama.cpp-src
-python convert_hf_to_gguf.py D:\AI_486_workspace\train_outputs\merged --outfile D:\AI_486_workspace\gguf\qwen3-486-f16.gguf --outtype f16
+python convert_hf_to_gguf.py D:\AI_486\train_outputs\merged --outfile D:\AI_486\gguf\qwen3-486-f16.gguf --outtype f16
 ```
 
 產出約 8GB 的 f16 GGUF。
@@ -476,7 +478,7 @@ python convert_hf_to_gguf.py D:\AI_486_workspace\train_outputs\merged --outfile 
 ### 6.3 量化為 Q4_K_M
 
 ```powershell
-D:\tools\llama.cpp\llama-quantize.exe D:\AI_486_workspace\gguf\qwen3-486-f16.gguf D:\AI_486_workspace\gguf\qwen3-486-q4km.gguf Q4_K_M
+D:\tools\llama.cpp\llama-quantize.exe D:\AI_486\gguf\qwen3-486-f16.gguf D:\AI_486\gguf\qwen3-486-q4km.gguf Q4_K_M
 ```
 
 產出約 2.5GB 的 Q4_K_M GGUF。量化完成後 `qwen3-486-f16.gguf`（中間檔）可刪除釋放 ~8GB。
@@ -493,17 +495,17 @@ D:\tools\llama.cpp\llama-quantize.exe D:\AI_486_workspace\gguf\qwen3-486-f16.ggu
 驗證 GGUF 可載：
 
 ```powershell
-D:\tools\llama.cpp\llama-cli.exe -m D:\AI_486_workspace\gguf\qwen3-486-q4km.gguf -p "你好" -n 64
+D:\tools\llama.cpp\llama-cli.exe -m D:\AI_486\gguf\qwen3-486-q4km.gguf -p "你好" -n 64
 ```
 
 ## 7. 部署到 Ollama
 
 ### 7.1 建立 Modelfile
 
-`S:\AI_486\deploy\Modelfile`：
+`D:\AI_486\deploy\Modelfile`：
 
 ```
-FROM D:/AI_486_workspace/gguf/qwen3-486-q4km.gguf
+FROM D:/AI_486/gguf/qwen3-486-q4km.gguf
 
 TEMPLATE """{{ if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
@@ -531,7 +533,7 @@ SYSTEM """你扮演《Re:從零開始的異世界生活》風格的菜月昴 AI 
 ### 7.2 建立 Ollama 模型
 
 ```powershell
-cd S:\AI_486\deploy
+cd D:\AI_486\deploy
 ollama create qwen3-486 -f Modelfile
 ollama list
 ```
@@ -561,7 +563,7 @@ curl http://localhost:11434/v1/chat/completions `
 clone 到 D: 工作區：
 
 ```powershell
-cd D:\AI_486_workspace
+cd D:\AI_486
 git clone https://github.com/Open-LLM-VTuber/Open-LLM-VTuber.git app
 cd app
 ```
@@ -572,7 +574,7 @@ cd app
 uv sync
 ```
 
-`uv sync` 會根據專案內 `pyproject.toml` / `uv.lock` 建立自己的 `.venv` 並裝齊相依。Open LLM VTuber 與 S:\AI_486\.venv 是兩個獨立的 venv，互不干擾。
+`uv sync` 會根據專案內 `pyproject.toml` / `uv.lock` 建立自己的 `.venv` 並裝齊相依。Open LLM VTuber 與 D:\AI_486\.venv 是兩個獨立的 venv，互不干擾。
 
 ### 8.2 LLM 設定（`conf.yaml`）
 
@@ -617,11 +619,11 @@ Open LLM VTuber 送 chat 時若已帶 system，會覆寫 Modelfile 的預設 SYS
 
 1. 將 `C:\Users\chenb\Downloads\chitose\runtime\` 整個資料夾複製到：
    ```
-   D:\AI_486_workspace\app\live2d-models\chitose\
+   D:\AI_486\app\live2d-models\chitose\
    ```
    裡面應直接看到 `chitose.model3.json` 等檔案，不要多包一層資料夾。
 
-2. 編輯 `D:\AI_486_workspace\app\live2d-models\model_dict.json`，追加項目。`emotionMap` 的 value 為 `chitose.model3.json` 中 Expressions 陣列的 index（從 0 起算）。
+2. 編輯 `D:\AI_486\app\live2d-models\model_dict.json`，追加項目。`emotionMap` 的 value 為 `chitose.model3.json` 中 Expressions 陣列的 index（從 0 起算）。
 
    實際讀取 `chitose.model3.json` 確認 Expressions 順序（依 `PROJECT_ARCHITECTURE.md` 9.1 的清單，常見順序如下）：
 
@@ -706,7 +708,7 @@ edge-tts 免費且不需本地 GPU 資源。第二版可換 GPT-SoVITS 或 CosyV
 ### 8.7 啟動
 
 ```powershell
-cd D:\AI_486_workspace\app
+cd D:\AI_486\app
 uv run python run_server.py
 ```
 
@@ -787,7 +789,7 @@ uv run python run_server.py
 
 - 升級 Ollama 到 0.4+。
 - 確認 Modelfile 的 `FROM` 路徑是絕對路徑且檔案存在。
-- Modelfile 已採正斜線 `D:/AI_486_workspace/gguf/qwen3-486-q4km.gguf`，若仍報錯改絕對 Windows 路徑 `D:\AI_486_workspace\gguf\qwen3-486-q4km.gguf` 重試。
+- Modelfile 已採正斜線 `D:/AI_486/gguf/qwen3-486-q4km.gguf`，若仍報錯改絕對 Windows 路徑 `D:\AI_486\gguf\qwen3-486-q4km.gguf` 重試。
 
 ### 10.4 Open LLM VTuber 連不到 LLM
 
@@ -855,7 +857,7 @@ uv run python run_server.py
 
 - [ ] `train_qwen3_486.py` 跑完 2 epoch 不 OOM。
 - [ ] eval loss 結束時低於 epoch 0。
-- [ ] `D:\AI_486_workspace\train_outputs\lora\` 內含 adapter 檔。
+- [ ] `D:\AI_486\train_outputs\lora\` 內含 adapter 檔。
 - [ ] 5.3 推論測試輸出符合通過條件。
 
 ### 11.4 部署

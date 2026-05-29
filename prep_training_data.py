@@ -26,8 +26,8 @@ def rewrite(src: Path, dst: Path) -> int:
 
 
 def main() -> None:
-    base = Path(r"S:\AI_486\converted_dataset")
-    out = Path(r"S:\AI_486\data")
+    base = Path(r"D:\AI_486\converted_dataset")
+    out = Path(r"D:\AI_486\data")
     out.mkdir(parents=True, exist_ok=True)
 
     train_count = rewrite(

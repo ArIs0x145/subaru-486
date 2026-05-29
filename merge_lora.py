@@ -4,8 +4,8 @@ Output is consumed by llama.cpp/convert_hf_to_gguf.py downstream.
 """
 from unsloth import FastLanguageModel
 
-LORA_DIR = r"D:\AI_486_workspace\train_outputs\lora"
-MERGED_DIR = r"D:\AI_486_workspace\train_outputs\merged"
+LORA_DIR = r"D:\AI_486\train_outputs\lora"
+MERGED_DIR = r"D:\AI_486\train_outputs\merged"
 
 
 def main() -> None:

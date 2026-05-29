@@ -30,6 +30,10 @@ train/data/
 train/wandb/
 train/runs/
 
+# Migrated workspace dirs (formerly D:\AI_486_workspace)
+hf_cache/
+train_outputs/
+
 # Large model artifacts
 gguf/
 *.gguf
