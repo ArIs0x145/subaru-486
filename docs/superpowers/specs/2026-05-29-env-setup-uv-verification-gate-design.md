@@ -77,3 +77,15 @@ uv 快取會命中、秒裝。完成後再跑 `verify_env.py`。
 - **cu13x 生態未跟上**：bitsandbytes / xformers / unsloth 的 Windows wheel 可能還沒對 cu13x 出齊 → 由 §4 階梯自動降到 cu128。
 - **3.13 wheel 缺口**：pyarrow / torchaudio / peft 在 3.13 上的相容性問題 → 降到 3.12。
 - 兩條備援都由 `verify_env.py` 紅燈觸發，非人為臆測。
+
+## 9. 實際安裝結果
+
+- 日期：2026-05-29
+- Python：3.12.13
+- PyTorch：2.11.0+cu128（torchvision 0.26.0+cu128、torchaudio 2.11.0+cu128 已裝；cu128 有 Windows torchaudio wheel，故一併安裝）
+- bitsandbytes：0.49.2
+- unsloth：2026.5.8（unsloth-zoo 2026.5.4）
+- 其他：trl 0.19.1、peft 0.19.1、transformers 5.5.0
+- GPU：NVIDIA GeForce RTX 4060 Laptop GPU
+- verify_env.py：exit 0，5 項全 ok（torch CUDA build、cuda device、bitsandbytes import、unsloth import、bitsandbytes 4-bit forward on GPU）
+- 備註：依 §4 / §8 備援階梯，已從 cu132 降級到 cu128。原因：bitsandbytes 0.49.2 沒有 CUDA 13.2 的預編譯二進位（最高僅到 13.0），在 cu132 torch 上前四項檢查通過，但第 5 項 GPU 4-bit forward 觸發「CUDA VERSION MISMATCH（requested 13.2，無對應 libbitsandbytes_cuda132.dll）」。改用 cu128 torch 後 bitsandbytes 4-bit 實跑通過。另外安裝過程中 unsloth 與 `--reinstall bitsandbytes` 兩度把 torch 降為 CPU 版，皆已重新釘回 GPU build。Flash Attention 2 警告為無害（已自動改用 Xformers）。
