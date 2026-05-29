@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Training outputs
+train/venv/
+train/outputs/
+train/data/
+train/wandb/
+train/runs/
+
+# Large model artifacts
+gguf/
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+
+# Open LLM VTuber (separate repo cloned in-place)
+app/
+
+# Live2D assets (large binary, license-bound)
+live2d-models/
+
+# HF cache if any
+.cache/
+
+# Local secrets / config
+.env
+*.local.yaml
+
+# Claude Code local workspace settings
+.claude/
+
+# Logs
+*.log

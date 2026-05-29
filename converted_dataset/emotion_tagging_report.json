@@ -1,0 +1,36 @@
+{
+    "source":  "s:\\AI_486\\486Dataset.jsonL",
+    "total_input_lines":  163,
+    "converted_samples":  163,
+    "skipped_count":  0,
+    "skipped":  [
+
+                ],
+    "total_assistant_messages":  163,
+    "tagged_assistant_messages":  138,
+    "tag_counts":  {
+                       "[sadness]":  48,
+                       "[surprise]":  21,
+                       "[anger]":  4,
+                       "[neutral]":  56,
+                       "[smirk]":  3,
+                       "[joy]":  5,
+                       "[disgust]":  1,
+                       "untagged":  25
+                   },
+    "messages_format":  {
+                            "all":  "s:\\AI_486\\converted_dataset\\486_messages_tagged.jsonl",
+                            "train":  "s:\\AI_486\\converted_dataset\\486_messages_tagged_train.jsonl",
+                            "eval":  "s:\\AI_486\\converted_dataset\\486_messages_tagged_eval.jsonl",
+                            "train_samples":  146,
+                            "eval_samples":  17
+                        },
+    "sharegpt_format":  {
+                            "all":  "s:\\AI_486\\converted_dataset\\486_sharegpt_tagged.jsonl",
+                            "train":  "s:\\AI_486\\converted_dataset\\486_sharegpt_tagged_train.jsonl",
+                            "eval":  "s:\\AI_486\\converted_dataset\\486_sharegpt_tagged_eval.jsonl",
+                            "train_samples":  146,
+                            "eval_samples":  17
+                        },
+    "note":  "Emotion tags were added by deterministic keyword heuristics. Review before final training."
+}

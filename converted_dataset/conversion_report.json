@@ -1,0 +1,15 @@
+{
+    "source":  "s:\\AI_486\\486Dataset.jsonL",
+    "format":  "LLaMA-Factory ShareGPT JSONL",
+    "total_input_lines":  163,
+    "converted_samples":  163,
+    "train_samples":  146,
+    "eval_samples":  17,
+    "skipped_count":  0,
+    "skipped":  [
+
+                ],
+    "output_all":  "s:\\AI_486\\converted_dataset\\486_sharegpt.jsonl",
+    "output_train":  "s:\\AI_486\\converted_dataset\\486_sharegpt_train.jsonl",
+    "output_eval":  "s:\\AI_486\\converted_dataset\\486_sharegpt_eval.jsonl"
+}

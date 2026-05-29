@@ -1,0 +1,48 @@
+{
+    "source":  "s:\\AI_486\\486Dataset.jsonL",
+    "live2d_doc":  "https://docs.llmvtuber.com/docs/user-guide/live2d/",
+    "allowed_emotions":  [
+                             "neutral",
+                             "anger",
+                             "disgust",
+                             "fear",
+                             "joy",
+                             "smirk",
+                             "sadness",
+                             "surprise"
+                         ],
+    "total_input_lines":  163,
+    "converted_samples":  163,
+    "skipped_count":  0,
+    "skipped":  [
+
+                ],
+    "total_assistant_messages":  163,
+    "tagged_assistant_messages":  146,
+    "tag_counts":  {
+                       "[sadness]":  13,
+                       "[surprise]":  31,
+                       "[anger]":  4,
+                       "[neutral]":  36,
+                       "[smirk]":  2,
+                       "[joy]":  5,
+                       "[fear]":  53,
+                       "[disgust]":  2,
+                       "untagged":  17
+                   },
+    "messages_format":  {
+                            "all":  "s:\\AI_486\\converted_dataset\\486_messages_live2d_emotions.jsonl",
+                            "train":  "s:\\AI_486\\converted_dataset\\486_messages_live2d_emotions_train.jsonl",
+                            "eval":  "s:\\AI_486\\converted_dataset\\486_messages_live2d_emotions_eval.jsonl",
+                            "train_samples":  146,
+                            "eval_samples":  17
+                        },
+    "sharegpt_format":  {
+                            "all":  "s:\\AI_486\\converted_dataset\\486_sharegpt_live2d_emotions.jsonl",
+                            "train":  "s:\\AI_486\\converted_dataset\\486_sharegpt_live2d_emotions_train.jsonl",
+                            "eval":  "s:\\AI_486\\converted_dataset\\486_sharegpt_live2d_emotions_eval.jsonl",
+                            "train_samples":  146,
+                            "eval_samples":  17
+                        },
+    "note":  "Emotion tags follow the Open LLM VTuber Live2D guide keyword set. Deterministic heuristic tagging; review samples before final training."
+}
