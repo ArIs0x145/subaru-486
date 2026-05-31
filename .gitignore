@@ -45,6 +45,9 @@ gguf/
 # Open LLM VTuber (separate repo cloned in-place)
 app/
 
+# llama.cpp tools (prebuilt binaries + source clone, large/in-project)
+tools/
+
 # Live2D assets (large binary, license-bound)
 live2d-models/
 
