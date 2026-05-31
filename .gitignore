@@ -58,7 +58,7 @@ unsloth_compiled_cache/
 .env
 *.local.yaml
 
-# Claude Code local workspace settings
+# Local agent/editor workspace settings
 .claude/
 
 # Logs
