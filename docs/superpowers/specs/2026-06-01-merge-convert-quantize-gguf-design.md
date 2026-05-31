@@ -9,10 +9,10 @@
 把第 ④ 步訓練出的 LoRA adapter 變成可部署的量化 GGUF。adapter 只是 66MB 的「補丁」，必須先合回 base 模型、再轉成 llama.cpp/Ollama 吃的 GGUF 格式、最後量化壓縮到 8GB GPU 跑得動的大小。
 
 **範圍內：**
-- 安裝 llama.cpp 工具（官方 Windows CUDA 預編 release + convert 腳本來源）到 `D:\tools\`。
+- 安裝 llama.cpp 工具（官方 Windows CUDA 預編 release + convert 腳本來源）到專案內 `tools/`（已 gitignore）。
 - 執行 `merge_lora.py` 合併 LoRA → 16-bit HF 模型。
 - 轉換 merged → GGUF f16。
-- 量化 f16 → Q5_K_M。
+- 量化 f16 → Q4_K_M，量化完成後刪除中間 f16 檔。
 - 每步以產物存在性驗證；最後用 `llama-cli` 實際載入推一句話作為最硬證明。
 
 **範圍外：**
@@ -24,7 +24,8 @@
 
 - LoRA adapter 就位：`train_outputs/lora/adapter_model.safetensors`（66MB，r=8/alpha=16，base `unsloth/Qwen3-4B-Instruct-2507-bnb-4bit`）。
 - `merge_lora.py` 已存在且可用（`max_seq_length=1024` 與訓練一致；`save_pretrained_merged(..., save_method="merged_16bit")`）。
-- llama.cpp 工具**尚未安裝**：`D:\tools\llama.cpp\` 與 `convert_hf_to_gguf.py` 都不存在 → 本步需先裝。
+- llama.cpp 工具**尚未安裝**：`tools/llama.cpp\` 與 `convert_hf_to_gguf.py` 都不存在 → 本步需先裝。`.gitignore` 已有 `tools/` 排除規則。
+- llama.cpp 最新 release 為 `b9442`，提供 `llama-b9442-bin-win-cuda-13.3-x64.zip`（與本機 driver 13.3 相符）+ 對應 `cudart-llama-bin-win-cuda-13.3-x64.zip`（CUDA runtime DLL，需一併解壓）。
 - unsloth 一站式 `save_pretrained_gguf` 在本環境**不可用**（實測 `hasattr` 為 False）→ 必須走 llama.cpp 路線，Runbook §10.2 的 unsloth 內建備案在此不適用。
 - 磁碟：D: 約 176GB 空閒，充足（merged ~9GB + f16 ~8GB + Q5_K_M ~3GB）。
 
@@ -33,10 +34,10 @@
 | 項目 | 決策 |
 | --- | --- |
 | 終點 | 一次做到量化 GGUF |
-| 工具來源 | 官方 Windows CUDA 預編 release（Runbook §3.6） |
-| 工具位置 | `D:\tools\`（與 repo 分開，不進版控） |
-| 量化等級 | **Q5_K_M**（~3GB，品質較 Q4_K_M 更好；空間充足） |
-| 中間 f16 檔 | **保留**（方便日後試其他量化等級，不必重跑 merge/convert） |
+| 工具來源 | 官方 Windows CUDA 預編 release（Runbook §3.6），版本 b9442、cuda-13.3 build |
+| 工具位置 | 專案內 `tools/`（已 gitignore，不進版控） |
+| 量化等級 | **Q4_K_M**（~2.5GB，8GB GPU 首選；同時跑 TTS/ASR 餘裕較大） |
+| 中間 f16 檔 | **量化完成後刪除**（省 ~8GB；日後要重量化可從 merged 再轉） |
 
 ## 4. 架構：工具安裝 + 三步流水線
 
@@ -44,23 +45,24 @@
 
 | 步驟 | 動作 | 輸入 | 產物 | 驗證 |
 | --- | --- | --- | --- | --- |
-| 0a | 下載解壓 llama.cpp 預編 CUDA release | — | `D:\tools\llama.cpp\llama-quantize.exe`、`llama-cli.exe` | 檔案存在、`llama-quantize.exe --help` 可執行 |
-| 0b | clone llama.cpp 原始碼 + 裝 requirements | — | `D:\tools\llama.cpp-src\convert_hf_to_gguf.py` | 檔案存在、`python convert_hf_to_gguf.py --help` 可執行 |
+| 0a | 下載解壓 llama.cpp 預編 CUDA release + cudart | — | `tools\llama.cpp\llama-quantize.exe`、`llama-cli.exe` + cudart DLL | 檔案存在、`llama-quantize.exe --help` 可執行 |
+| 0b | clone llama.cpp 原始碼 + 裝 requirements | — | `tools\llama.cpp-src\convert_hf_to_gguf.py` | 檔案存在、`python convert_hf_to_gguf.py --help` 可執行 |
 | 1 | `python merge_lora.py` | `train_outputs/lora` | `train_outputs/merged/`（16-bit HF，~9GB） | 目錄含 `config.json`、`tokenizer.json`、`*.safetensors` |
 | 2 | `convert_hf_to_gguf.py merged --outtype f16` | `train_outputs/merged` | `gguf/qwen3-486-f16.gguf`（~8GB） | 檔案存在且 >1GB |
-| 3 | `llama-quantize.exe f16 ... Q5_K_M` | f16 GGUF | `gguf/qwen3-486-q5km.gguf`（~3GB） | 檔案存在且 1.5–4GB |
-| 4 | `llama-cli.exe -m q5km -p "你好" -n 32` | Q5_K_M GGUF | 終端輸出 | 載入成功、產生繁中字元、無 error/crash |
+| 3 | `llama-quantize.exe f16 ... Q4_K_M` | f16 GGUF | `gguf/qwen3-486-q4km.gguf`（~2.5GB） | 檔案存在且 1.5–3.5GB |
+| 4 | `llama-cli.exe -m q4km -p "你好" -n 32` | Q4_K_M GGUF | 終端輸出 | 載入成功、產生繁中字元、無 error/crash |
+| 5 | 刪除中間 f16 檔 | `gguf/qwen3-486-f16.gguf` | （釋放 ~8GB） | f16 檔已不存在、q4km 仍在 |
 
 ## 5. 驗證策略（TDD 精神）
 
 本步幾乎全是外部工具命令、無新 Python 邏輯，因此「測試」= 每步產物的存在性與大小檢查，加上最後一步用 `llama-cli` **實際載入並生成文字**（最硬證明：量化模型真的能跑、能輸出中文，而不只是檔案存在）。
 
 通過條件（Definition of Done）：
-- `D:\tools\llama.cpp\llama-quantize.exe`、`llama-cli.exe`、`D:\tools\llama.cpp-src\convert_hf_to_gguf.py` 皆可執行。
+- `tools\llama.cpp\llama-quantize.exe`、`llama-cli.exe`、`tools\llama.cpp-src\convert_hf_to_gguf.py` 皆可執行。
 - `train_outputs/merged/` 含 `config.json` + `*.safetensors`。
-- `gguf/qwen3-486-f16.gguf` 存在（保留）。
-- `gguf/qwen3-486-q5km.gguf` 存在、約 3GB。
-- `llama-cli` 用 Q5_K_M 載入、回應一句含繁體中文、exit 0。
+- `gguf/qwen3-486-q4km.gguf` 存在、約 2.5GB。
+- `llama-cli` 用 Q4_K_M 載入、回應一句含繁體中文、exit 0。
+- 中間 `gguf/qwen3-486-f16.gguf` 已刪除。
 
 ## 6. 風險與備援
 
