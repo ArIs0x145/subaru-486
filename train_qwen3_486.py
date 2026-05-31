@@ -16,6 +16,22 @@ OUTPUT_DIR = r"D:\AI_486\train_outputs\lora"
 DATA_DIR = Path(r"D:\AI_486\data")
 
 
+def build_datasets(data_dir, tokenizer):
+    def formatting(example):
+        text = tokenizer.apply_chat_template(
+            example["messages"], tokenize=False, add_generation_prompt=False
+        )
+        return {"text": text}
+
+    train_ds = load_dataset(
+        "json", data_files=str(Path(data_dir) / "train.jsonl"), split="train"
+    ).map(formatting)
+    eval_ds = load_dataset(
+        "json", data_files=str(Path(data_dir) / "eval.jsonl"), split="train"
+    ).map(formatting)
+    return train_ds, eval_ds
+
+
 def main() -> None:
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_NAME,
@@ -40,18 +56,7 @@ def main() -> None:
 
     tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
 
-    def formatting(example):
-        text = tokenizer.apply_chat_template(
-            example["messages"], tokenize=False, add_generation_prompt=False
-        )
-        return {"text": text}
-
-    train_ds = load_dataset(
-        "json", data_files=str(DATA_DIR / "train.jsonl"), split="train"
-    ).map(formatting)
-    eval_ds = load_dataset(
-        "json", data_files=str(DATA_DIR / "eval.jsonl"), split="train"
-    ).map(formatting)
+    train_ds, eval_ds = build_datasets(DATA_DIR, tokenizer)
 
     trainer = SFTTrainer(
         model=model,
