@@ -4,12 +4,20 @@ trl / unsloth APIs evolve — if SFTConfig field names differ in your installed
 version, follow the official example for that version.
 """
 import argparse
+import sys
 from pathlib import Path
 
 from datasets import load_dataset
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
 from trl import SFTTrainer, SFTConfig
+
+# Windows console may be cp950; force UTF-8 so unsloth's emoji prints don't crash.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 
 MODEL_NAME = "unsloth/Qwen3-4B-Instruct-2507-bnb-4bit"
 MAX_SEQ_LEN = 1024
