@@ -3,6 +3,7 @@
 trl / unsloth APIs evolve — if SFTConfig field names differ in your installed
 version, follow the official example for that version.
 """
+import argparse
 from pathlib import Path
 
 from datasets import load_dataset
@@ -61,14 +62,13 @@ def make_sft_config(output_dir, smoke=False, max_steps=None, epochs=2):
     return SFTConfig(**kwargs)
 
 
-def main() -> None:
+def load_model_and_tokenizer(model_name=MODEL_NAME, max_seq_len=MAX_SEQ_LEN):
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=MODEL_NAME,
-        max_seq_length=MAX_SEQ_LEN,
+        model_name=model_name,
+        max_seq_length=max_seq_len,
         dtype=None,
         load_in_4bit=True,
     )
-
     model = FastLanguageModel.get_peft_model(
         model,
         r=8,
@@ -82,41 +82,41 @@ def main() -> None:
         use_gradient_checkpointing="unsloth",
         random_state=42,
     )
-
     tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
+    return model, tokenizer
 
+
+def main(args):
+    model, tokenizer = load_model_and_tokenizer(args.model)
     train_ds, eval_ds = build_datasets(DATA_DIR, tokenizer)
-
+    config = make_sft_config(
+        output_dir=args.output, smoke=args.smoke, max_steps=args.max_steps
+    )
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        dataset_text_field="text",
-        max_seq_length=MAX_SEQ_LEN,
-        args=SFTConfig(
-            output_dir=OUTPUT_DIR,
-            per_device_train_batch_size=1,
-            gradient_accumulation_steps=8,
-            num_train_epochs=2,
-            learning_rate=1e-4,
-            warmup_ratio=0.03,
-            lr_scheduler_type="cosine",
-            logging_steps=5,
-            eval_strategy="epoch",
-            save_strategy="epoch",
-            bf16=True,
-            optim="adamw_8bit",
-            seed=42,
-            report_to="none",
-        ),
+        args=config,
     )
-
     trainer.train()
-    model.save_pretrained(OUTPUT_DIR)
-    tokenizer.save_pretrained(OUTPUT_DIR)
-    print("LoRA saved to", OUTPUT_DIR)
+    model.save_pretrained(args.output)
+    tokenizer.save_pretrained(args.output)
+    print("LoRA saved to", args.output)
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="QLoRA fine-tune Qwen3-4B on 486 dataset")
+    p.add_argument("--smoke", action="store_true",
+                   help="max_steps=1, output to throwaway dir")
+    p.add_argument("--max-steps", type=int, default=None, dest="max_steps")
+    p.add_argument("--model", default=MODEL_NAME)
+    p.add_argument("--output", default=None)
+    return p.parse_args()
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    if args.output is None:
+        args.output = r"D:\AI_486\train_outputs\smoke" if args.smoke else OUTPUT_DIR
+    main(args)
