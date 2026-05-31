@@ -29,3 +29,11 @@ def test_formatted_text_has_template_markers():
     sample = train_ds[0]["text"]
     assert "<|im_start|>" in sample
     assert "[" in sample  # assistant 回覆帶 [emotion] 標籤
+
+
+def test_make_sft_config_smoke_and_full():
+    smoke_cfg = t.make_sft_config(output_dir="train_outputs/smoke", smoke=True)
+    assert smoke_cfg.max_steps == 1
+
+    full_cfg = t.make_sft_config(output_dir="train_outputs/lora", smoke=False)
+    assert full_cfg.num_train_epochs == 2

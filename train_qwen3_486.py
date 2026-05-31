@@ -32,6 +32,35 @@ def build_datasets(data_dir, tokenizer):
     return train_ds, eval_ds
 
 
+def make_sft_config(output_dir, smoke=False, max_steps=None, epochs=2):
+    kwargs = dict(
+        output_dir=output_dir,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=8,
+        learning_rate=1e-4,
+        warmup_ratio=0.03,
+        lr_scheduler_type="cosine",
+        logging_steps=5,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        bf16=True,
+        optim="adamw_8bit",
+        seed=42,
+        report_to="none",
+        dataset_text_field="text",
+        max_length=MAX_SEQ_LEN,
+    )
+    if smoke:
+        kwargs["max_steps"] = 1
+        kwargs["eval_strategy"] = "no"
+        kwargs["save_strategy"] = "no"
+    elif max_steps is not None:
+        kwargs["max_steps"] = max_steps
+    else:
+        kwargs["num_train_epochs"] = epochs
+    return SFTConfig(**kwargs)
+
+
 def main() -> None:
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_NAME,
