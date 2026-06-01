@@ -70,3 +70,19 @@
 - **預編 release 找不到對應 CUDA 版本**：選與本機相容的 `cu12.x` 版（driver 13.3 向下相容）；若 CUDA 版有問題，可退而用 CPU 版 release（量化是一次性、CPU 也能跑，僅較慢）。
 - **merge OOM/VRAM 不足**：`merge_lora.py` 以 16-bit 載入需 ~9GB，Unsloth 會在 VRAM 不足時 fallback 到 CPU 合併（較慢但會完成），無需介入。
 - **路徑含空白/反斜線**：所有指令用絕對路徑；Windows 下注意 PowerShell 與 exe 引號。
+
+## 7. 實際產出結果
+
+- 日期：2026-06-01
+- 工具：llama.cpp b9442（win-cuda-13.3）+ cudart；convert_hf_to_gguf.py（gguf 套件已隨 unsloth 在 venv，無需另裝 requirements）
+- merged：`train_outputs/merged/`（16-bit，2 個 safetensors 分片 ~8GB）
+- f16 GGUF：8.05GB（中間檔，已依決策刪除）
+- **Q4_K_M GGUF：`gguf/qwen3-486-q4km.gguf`，2.33GB**（量化耗時 ~32s）
+- llama-cli 實跑（`-f` UTF-8 prompt + `chcp 65001`）：
+  - 輸入：`你好，今天天氣如何？`
+  - 輸出：`你好！我無法直接獲取當前天氣資訊，但我可以幫你查詢天氣。請問你想知道哪裡的天氣呢？`
+  - 繁體中文、語意通順、exit 0、生成 ~34 t/s
+- 踩雷紀錄：
+  1. merge_lora.py 原 `load_in_4bit=False` 會載 fp16（~9GB）超出 8GB GPU → accelerate offload + PeftModel dispatch 報 `need offload_dir`。改 `load_in_4bit=True`（~3GB，unsloth 合併時 dequantize 成 16bit）解決。
+  2. llama-cli b9442 已移除 `-no-cnv`，改用 `-st`（single-turn）。
+  3. Windows cp950 console 顯示中文亂碼 → `chcp 65001` + 用 `-f` 讀 UTF-8 prompt 檔 + 輸出導 UTF-8 檔；非模型問題。
