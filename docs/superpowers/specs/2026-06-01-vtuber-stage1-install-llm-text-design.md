@@ -71,3 +71,15 @@
 - **uv sync 耗時或撞相依**：依 app 官方 README；app 的 venv 與我們的 `D:\AI_486\.venv` 嚴格分開，不可混用。
 - **其他串接 bug**：參考官方文件 https://docs.llmvtuber.com/docs/user-guide/live2d/ （Live2D 與使用者指南；含 conf.yaml、啟動相關說明）。
 - **中文驗證**：在瀏覽器網頁內看回覆，不經 PowerShell，不受先前 cp950 / Invoke-RestMethod latin1 解碼 bug 影響。
+
+## 8. 實際串接結果（階段一）
+
+- 日期：2026-06-01
+- Open LLM VTuber clone 至 `app/`（main 最新）；`frontend/` 為 git submodule，clone 時未帶 `--recursive`，需另跑 `git submodule update --init --recursive` 補齊（否則網頁空白）。
+- `uv sync` 成功，建 app 自己的 `app/.venv`（與 D:\AI_486\.venv 分開）。
+- conf 範本：`config_templates/conf.ZH.default.yaml`（繁/簡中導向版）→ 複製成 `app/conf.yaml`。
+- LLM 設定（實際欄位）：`character_config.agent_config.agent_settings.basic_memory_agent.llm_provider: 'ollama_llm'`；`character_config.agent_config.llm_configs.ollama_llm`：`base_url: http://localhost:11434/v1`、`model: 'qwen3-486'`。
+- 啟動：`uv run python run_server.py` → `Uvicorn running on http://localhost:12393`；log 確認 `Initialized AsyncLLM ... qwen3-486`。
+- 內建網頁文字對話：成功，回覆為菜月昴風、繁中。✅
+- 踩雷（root cause）：預設 `persona_prompt` 是簡體的「Mili」角色，會被當 system prompt 送入並**覆寫 Modelfile 的菜月昴 SYSTEM** → 導致回覆變簡體且非菜月昴。對策：把 conf.yaml 的 `persona_prompt` 改為菜月昴人設並明確「一律繁體中文、禁簡體」，`character_name` 改為「菜月昴」，重啟 server 後恢復繁體 + 角色語氣。
+- 範圍外（後續階段）：Live2D（chitose，`live2d_model_name` 仍為預設 mao_pro）、ASR、TTS。emotion 標籤機制走 VTuber 的 `live2d_expression_prompt`（階段二接 Live2D 時處理），本階段未強制。
