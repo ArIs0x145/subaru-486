@@ -64,3 +64,21 @@
 - **中文/log 假象**：沿用上輪教訓 —— OLV server log 經 PowerShell 寫檔會 cp950 亂碼，是顯示假象非實際；驗證以瀏覽器實聽 + 前端 console 為準，不信 log 中文。
 - **表情仍不動**：若有語音但表情不動，回到 console 看 `actions {expressions:...}` 是否到前端、mao_pro 是否載入；參考官方文件 https://docs.llmvtuber.com/docs/user-guide/live2d/。
 - **app/ gitignored**：conf.yaml 變更不進版控；本步唯一版控變更為最後把結果記到 spec。
+
+## 7. 實際結果（TTS 階段）— 達成
+
+日期：2026-06-01。**通過**：菜月昴用繁中男聲開口說話，mao_pro 表情隨語音切換。一併完成上輪（階段二）卡住的表情驗收，證實「表情依賴音頻播放」的推論。
+
+### 完成 / 驗證
+- `conf.yaml` `edge_tts.voice` 改為 `zh-TW-YunJheNeural`，edge-tts 離線合成測試產出非空 mp3（25KB）、聲線正確。
+- server 重啟，TTS 初始化 `edge_tts`，瀏覽器對話：**聽到繁中男聲** + 回覆菜月昴風繁中 + **mao_pro 表情隨語音切換**（升職 [joy]、遲到 [smirk]、貓走 [surprise] 皆觸發）。
+
+### 關鍵根因：缺 ffmpeg（最初無聲的真因）
+- 第一次驗收**無聲**。前端 console 每段都 `{type:'audio', audio: null}` + `[AudioManager] No current audio playing`，表情雖解析出（`actions {expressions:[..]}`）但因綁音頻而不觸發。
+- server log 揭露真因：`Error preparing audio payload: Error loading or converting generated audio file to wav file 'cache\\...mp3': [WinError 2] 系統找不到指定的檔案。`
+- 根因：OLV 的 `utils/stream_audio.py:63` `AudioSegment.from_file()`（pydub）把 edge_tts 產的 mp3 轉 wav，**pydub 轉檔依賴 ffmpeg**；機器未裝 ffmpeg → `WinError 2`（找不到 ffmpeg.exe，非 mp3）→ audio=null → 無聲 + 表情不觸發（同一根因）。
+- 對策：`winget install Gyan.FFmpeg`（裝 8.1.1）。winget 已更新 user PATH，**新開的終端**會自動有 ffmpeg；但安裝當下正在跑的進程／既有 shell 仍是舊 PATH，需用含 ffmpeg bin 的 PATH 重啟 server 才生效。重啟後語音 + 表情全通。
+
+### 對 app/ 的變更（gitignored，不進版控）
+- `conf.yaml` `edge_tts.voice` = `zh-TW-YunJheNeural`。
+- 系統層裝了 ffmpeg（winget，machine/user PATH，永久）。
