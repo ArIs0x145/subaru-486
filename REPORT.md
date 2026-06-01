@@ -367,48 +367,103 @@ emotion 管線（已驗證）：LLM 輸出 `[joy]` → `extract_emotion` 解析 
 
 VTuber 端 persona_prompt 採「熱血中二吐槽版」菜月昴：誇張有戲、愛吐槽、自嘲卻死不放棄、對喜歡的人事物超狂熱，關鍵時刻認真可靠；一律繁中、回覆 2–4 句適合語音。
 
-### 8.5 內部執行細節：一次對話在系統內怎麼跑
+### 8.5 內部執行細節：每個流程拆開講
 
-Open LLM VTuber 是 **FastAPI + WebSocket** 架構，前端（瀏覽器）與 server 之間靠 WebSocket 串訊息。以下是打一句話後，系統內部實際發生的事（訊息型別取自實機 console）：
+Open LLM VTuber 是 **FastAPI + WebSocket** 架構。一句使用者輸入，內部會經過 7 個階段。以下每段都標出**實際的檔案／函式**與其實作機制（程式碼路徑相對於 `app/src/open_llm_vtuber/`）。
+
+#### 總覽：串流加工管線
+
+核心精神是 **「邊生成、邊斷句、邊合成、邊播放」** 的串流管線。其骨幹是 `agent/transformers.py` 裡四層 **decorator 堆疊**，把 LLM 的 token 流逐步加工成可播放的 `SentenceOutput`：
 
 ```
-使用者打字「我今天又遲到被罵了」
-   │ WebSocket 送出
-   ▼
-[server] conversation-chain-start ──► full-text: "Thinking..."
-   │
-   │ ① 呼叫 Ollama（qwen3-486）OpenAI 相容 API，串流回 token
-   │ ② 回覆用 pysbd 斷句，逐句處理（降低首句延遲）
-   ▼
- 對每一句：
-   ├─ extract_emotion 抽開頭 [emotion] → 表情 index
-   ├─ edge-tts 合成該句 mp3 → pydub(ffmpeg) 轉 wav → base64
-   └─ 打包成 audio payload 送前端：
-        { type:'audio', audio:<base64 wav>, volumes:[...],
-          display_text:{...}, actions:{expressions:[idx]} }
-   ▼
-[前端] 把每個 audio payload 丟進「audio task queue」依序播放：
-   ├─ 播放 wav（喇叭出聲）
-   ├─ 用 volumes 陣列即時驅動 Live2D 嘴型開合（lip-sync）
-   └─ 播該段時套用 actions.expressions → 表情切換
-   ▼
-[server] backend-synth-complete ×N → force-new-message
-       → conversation-chain-end（本輪結束）
+LLM token 流
+  └─►[sentence_divider] 把 token 組成「一句」+ 標籤
+       └─►[actions_extractor] 從句子抽 [emotion] → Actions.expressions
+            └─►[display_processor] 整理成畫面顯示文字 DisplayText
+                 └─►[tts_filter] 濾掉不該唸的字 → 產出 SentenceOutput(display, tts, actions)
+                      └─► single_conversation 消費 → 丟給 TTS 管理器
 ```
 
-**三個引擎各自的內部角色：**
+對應原始碼（`agents/basic_memory_agent.py` 的 `_chat_function_factory`）：
 
-| 引擎 | 實作 | 內部執行重點 |
-| --- | --- | --- |
-| **LLM** | Ollama `qwen3-486`（OpenAI 相容 `/v1/chat/completions`） | server 以串流方式取 token；回覆含 `[emotion]` 前綴與繁中短句 |
-| **TTS** | edge-tts（線上）+ pydub/ffmpeg | **逐句**合成（非整段），第一句一出就開始播以降延遲；mp3→wav 由 ffmpeg 轉檔 |
-| **Live2D** | 前端 `pixi-live2d-display-lipsyncpatch`（Cubism 3–5） | 嘴型由音訊音量(volumes)驅動；表情由 `expressions` 索引套用，**綁在該段音頻播放事件上** |
+```python
+@tts_filter(self._tts_preprocessor_config)   # 第4層
+@display_processor()                          # 第3層
+@actions_extractor(self._live2d_model)        # 第2層
+@sentence_divider(faster_first_response, segment_method, valid_tags)  # 第1層
+async def chat_with_memory(...):
+    token_stream = self._llm.chat_completion(messages, self._system)  # 最內層：LLM
+```
 
-**幾個關鍵的內部設計，解釋了專案中觀察到的現象：**
+#### 階段 A — 對話啟動
 
-- **逐句串流（streaming by sentence）**：LLM 回覆一邊生成一邊斷句、逐句合成播放，所以使用者不必等整段講完 —— 這是 `faster_first_response` + pysbd 的效果。
-- **表情綁音頻**：每段 `expressions` 是掛在那段 audio task 上的。**沒有音頻就沒有 audio task，表情自然不會觸發** —— 這正是階段二「表情不動」與 TTS 缺 ffmpeg「無聲＝無表情」的根本原因（見第 11 節 #8、#9）。
-- **emotion 只在首段**：實機可見只有第一個 audio payload 帶 `actions:{expressions:[idx]}`，其餘段為空 `actions:{}` —— 因為 `[emotion]` 標籤只出現在整段回覆開頭。
+- **檔案**：`conversations/single_conversation.py` → `process_single_conversation()`
+- 收到使用者輸入後，先 `send_conversation_start_signals()` 送出 `conversation-chain-start`、`full-text: "Thinking..."`。
+- 建立一個 **`TTSTaskManager`**（本輪專用，管 TTS 排序），呼叫 `context.agent_engine.chat(batch_input)` 取得 **非同步輸出串流**，用 `async for` 逐項消費。
+
+#### 階段 B — LLM 推論（token 串流）
+
+- **檔案**：`agent/stateless_llm/ollama_llm.py`（繼承 `openai_compatible_llm.py` 的 `AsyncLLM`）
+- 啟動時先 `POST /api/chat` 帶 `keep_alive` **預載模型**進 VRAM（降首回延遲）；退出時再以 `keep_alive=0` 卸載。
+- 推論走 **OpenAI 相容 `/v1/chat/completions`**，`chat_completion(messages, system)` 以 **串流**逐 token 回吐。對 server 而言 Ollama 就是個本地 OpenAI endpoint，模型即 `qwen3-486`。
+
+#### 階段 C — 斷句（streaming by sentence）
+
+- **檔案**：`utils/sentence_divider.py`（`SentenceDivider`，用 **pysbd** + 標點規則）+ `transformers.py` 的 `sentence_divider` decorator
+- 把零碎 token **即時組成「完整一句」**才往下送。`faster_first_response=True` 時，第一句一湊滿就先放行 → **首句更快出聲**。
+- 同時解析特殊標籤（如 `think`），讓內心話不進 TTS。
+
+#### 階段 D — 抽情緒 → 動作
+
+- **檔案**：`transformers.py` 的 `actions_extractor` → 呼叫 `live2d_model.py` 的 `extract_emotion()`
+- `extract_emotion()` 實作很直白：把句子轉小寫，**逐字掃描 `[`**，比對 emotionMap 的 key（`[joy]`、`[sadness]`…），命中就把對應的**表情索引**塞進 `Actions.expressions`：
+
+```python
+# live2d_model.py（節錄）
+for key in self.emo_map.keys():
+    if str_to_check[i : i + len(f"[{key}]")] == f"[{key}]":
+        expression_list.append(self.emo_map[key])   # 取表情 index
+```
+
+> 這就是第 6.8 節「情緒是講出來的」的下游：模型在文字裡吐 `[joy]`，這裡把它轉成 Live2D 的表情編號。
+
+#### 階段 E — 顯示與 TTS 文字整理
+
+- **檔案**：`transformers.py` 的 `display_processor`（產 `DisplayText`，畫面字幕）與 `tts_filter`（產要唸的 `tts_text`）
+- `tts_filter` 會**過濾掉不該唸出來的字元**（括號、星號、特殊符號等，見 `tts_preprocessor`），避免把 `[emotion]`、表情符號唸出來。最後打包成 `SentenceOutput(display_text, tts_text, actions)`。
+
+#### 階段 F — TTS 合成與「平行生成、順序送出」
+
+- **檔案**：`conversations/tts_manager.py`（`TTSTaskManager`）+ `tts/edge_tts.py`
+- 每個 `SentenceOutput` 進 `speak()`：先領一個遞增的 **sequence number**，再 `create_task()` **平行**合成（多句同時跑，不互等）。
+- 合成：`edge_tts.py` 的 `generate_audio()` 用 `edge_tts.Communicate(text, voice).save_sync()` 把該句存成 `cache/xxx.mp3`。
+- **關鍵**：合成是平行的、完成有先後，但 `_process_payload_queue()` 用 `_next_sequence_to_send` **緩衝重排**，保證**送到前端的順序＝原文順序**（不會句子亂序）。
+
+#### 階段 G — 音訊封裝：wav + 音量曲線（嘴型來源）
+
+- **檔案**：`utils/stream_audio.py` → `prepare_audio_payload()`
+- 用 **pydub**（底層 **ffmpeg**）把 mp3 載入並 `export("wav")`，再 base64 編碼。
+- 同時用 `_get_volume_by_chunks()` 把音訊切成 **每 20ms 一塊**，算各塊 **RMS 音量**並正規化成 0–1 陣列 —— 這條 **`volumes` 曲線就是前端嘴型開合（lip-sync）的依據**。
+- 最終 payload：
+
+```jsonc
+{ "type": "audio", "audio": "<base64 wav>", "volumes": [0.2, 0.8, ...],
+  "slice_length": 20, "display_text": {...}, "actions": {"expressions": [idx]} }
+```
+
+> **缺 ffmpeg 的雷就在這裡**：`AudioSegment.from_file()` 需要 ffmpeg，沒裝就丟 `WinError 2` → 這段拋例外 → 上游改送 `audio: null` 的靜音 payload → 無聲（見第 11 節 #9）。
+
+#### 階段 H — 前端播放（嘴型 + 表情同步）+ 收尾
+
+- 前端把每個 audio payload 丟進 **audio task queue** 依序播放：放 wav 出聲、用 `volumes` 驅動嘴型、**播該段時套用 `actions.expressions` 切換表情**。
+- server 端所有 TTS task `gather` 完成後送 `backend-synth-complete`，最後 `finalize_conversation_turn()` 送 `conversation-chain-end` 收尾。
+
+#### 這些實作細節，解釋了專案中觀察到的現象
+
+- **逐句串流**：階段 C 的 pysbd + `faster_first_response` 讓回覆「邊講邊出」，不必等整段。
+- **句子不會亂序**：階段 F 平行合成但用 sequence number 重排，所以亂序生成也照原文播放。
+- **表情綁音頻**：表情 `expressions` 是掛在「那段 audio payload」上、由前端在播放該段時觸發。**沒有音頻就沒有播放事件，表情自然不動** —— 這正是階段二「表情不動」與缺 ffmpeg「無聲＝無表情」的同一根因（第 11 節 #8、#9）。
+- **emotion 只在首段**：`[emotion]` 只出現在整段回覆開頭，所以實機只有第一個 payload 帶 `actions:{expressions:[idx]}`，其餘為 `actions:{}`。
 
 ---
 
