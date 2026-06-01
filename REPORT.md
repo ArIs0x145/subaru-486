@@ -206,11 +206,34 @@ neutral / joy / sadness / anger / surprise / smirk / fear / disgust
 
 實際載入：`unsloth/Qwen3-4B-Instruct-2507-bnb-4bit`（4-bit 量化權重）。
 
-### 6.2 訓練方法：Unsloth + QLoRA
+### 6.2 微調概念速懂（白話）
 
-選 **Unsloth** 而非 LLaMA-Factory：對單卡、低 VRAM、Windows 環境最友善，記憶體優化與啟動速度好。QLoRA = 4-bit 量化基底 + LoRA 低秩adapter，讓 4B 模型能在 8GB 上微調。
+要把一個通用模型變成「菜月昴」，理論上有兩條路；本專案走第二條：
 
-**實際超參數**（見 [`train_qwen3_486.py`](train_qwen3_486.py)）：
+| 做法 | 說明 | 問題 |
+| --- | --- | --- |
+| 全參數微調（Full Fine-tune） | 把模型 40 億個參數**全部**重新訓練 | 8GB GPU 根本塞不下；小資料極易過擬合、把模型練壞 |
+| **LoRA / QLoRA**（本專案） | 凍結原模型，只**外掛一小組可訓練參數**去學新語氣 | 省記憶體、快、不傷原能力 —— 8GB 可行 |
+
+三個關鍵名詞，用一句話講清楚：
+
+- **LoRA（低秩適配）**：不動原本的大權重矩陣，而是在旁邊掛兩個「又瘦又小」的矩陣（rank=8）去學差異。原模型像一本印好的書，LoRA 像貼上去的便利貼 —— 只訓練便利貼，書本身不改。**可訓練參數因此只佔總量不到 1%**。
+- **QLoRA（量化版 LoRA）**：再把被凍結的原模型壓成 **4-bit**（記憶體再砍一半以上），LoRA 便利貼仍用較高精度訓練。這是讓 40 億參數模型能擠進 8GB 的關鍵。
+- **Unsloth**：一個專門加速 LoRA/QLoRA 的框架，對單卡、低 VRAM、Windows 特別友善，訓練更快、更省記憶體。本專案選它而非 LLaMA-Factory。
+
+> 直覺比喻：原模型是一位「會講話的通才」，我們**沒有重教他說話**，只是給他一份 146 句的「菜月昴語氣劇本」反覆排練，讓他養成這個角色的口吻與情緒習慣。
+
+### 6.3 我們實際怎麼微調（逐步）
+
+對照 [`train_qwen3_486.py`](train_qwen3_486.py)，整個流程是：
+
+1. **載入 4-bit 基底**：`unsloth/Qwen3-4B-Instruct-2507-bnb-4bit`，`load_in_4bit=True` —— 40 億參數壓到 4-bit 才放得進 8GB。
+2. **外掛 LoRA adapter**：在每層的注意力（q/k/v/o）與 MLP（gate/up/down）共 7 種投影矩陣旁掛上 r=8 的 LoRA，並開 Unsloth gradient checkpointing 進一步省 VRAM。原模型權重全程**凍結不動**。
+3. **套用對話模板**：用 Qwen 的 chat template 把每筆 `{system, user, assistant}` 組成模型認得的對話格式（pytest 驗證模板標記正確）。
+4. **SFT 監督式微調**：對 146 筆訓練資料跑 2 個 epoch（≈38 個 optimizer step），模型只更新 LoRA 那不到 1% 的參數，去逼近「菜月昴會怎麼回」。
+5. **存出 adapter**：訓練只產出輕量的 LoRA adapter（非完整模型），後續再合併（見第 7 節）。
+
+### 6.4 實際超參數（見 [`train_qwen3_486.py`](train_qwen3_486.py)）
 
 | 參數 | 值 |
 | --- | --- |
@@ -230,7 +253,20 @@ neutral / joy / sadness / anger / surprise / smirk / fear / disgust
 
 2 epoch × 146 筆 ÷ 有效 batch 8 ≈ **38 個 optimizer step**。
 
-### 6.3 工程品質（TDD）
+### 6.5 這種微調方式的優點
+
+| 優點 | 說明 |
+| --- | --- |
+| **記憶體省、消費級可行** | 4-bit 基底 + 只訓練 <1% 參數，讓 4B 模型在 8GB 筆電上跑得動，免雲端 GPU |
+| **訓練快、迭代便宜** | 要更新的參數極少，38 step 很快跑完；想調語氣可低成本重訓 |
+| **不傷原模型能力** | 原權重凍結，模型保留通用對話與繁中理解，只「加掛」角色語氣 |
+| **產物輕、可插拔** | LoRA adapter 只有數十 MB，可隨時換掉或疊加；基底模型可重用 |
+| **過擬合風險較低** | 可訓練參數少 + epoch 控制在 2，小資料也不易把模型練壞 |
+| **流程標準、可重現** | Unsloth + trl 是主流組合，腳本化、有 pytest 與 smoke test 把關 |
+
+> 一句話：**用最小的訓練成本，在最便宜的硬體上，安全地給通用模型「加裝」一個角色人格。**
+
+### 6.6 工程品質（TDD）
 
 訓練腳本不是一次寫成，而是以 **TDD + 單元拆解**逐步對齊實際安裝的套件 API：
 
@@ -238,9 +274,33 @@ neutral / joy / sadness / anger / surprise / smirk / fear / disgust
 - 用 pytest 驗證 chat template 套用後含正確標記、SFTConfig 欄位對齊 trl 0.19.1。
 - 加 `--smoke` 旗標（`max_steps=1`）先做最小煙霧測試確認管線通，再跑完整訓練。
 
-### 6.4 避免過擬合
+### 6.7 避免過擬合
 
 資料量小，因此：epoch 控制在 2、以 eval loss + **人工角色語氣測試**共同判斷（不只看 loss）、保留 base model 的基本對話能力。最終 adapter 在人工測試中能穩定輸出菜月昴風繁中短句，且未退化成複讀資料集。
+
+### 6.8 emotion 標籤是怎麼學會的
+
+模型輸出的 `[joy]`、`[sadness]` 不是另外寫程式判斷的，而是**在微調時跟著語氣一起學進去的**：
+
+1. **資料端**：每筆訓練資料的 assistant 回覆都在開頭放好對應情緒標籤，例如 `[sadness] 喂喂，這也太硬撐了吧…`。標籤對模型而言就是回覆文字的一部分。
+2. **訓練端**：SFT 讓模型學「given 對話脈絡 → 該怎麼回」，於是它連帶學會「先吐出一個合理的 `[emotion]`，再接角色化內文」這個輸出習慣。**沒有額外的情緒分類器、也沒有特殊 loss** —— 純粹是模型學會在開頭生成這幾個 token。
+3. **推論端**：VTuber 收到回覆後用 `extract_emotion` 掃開頭的 `[tag]`，對照 emotionMap 換成表情索引，再驅動 Live2D。
+
+> 一句話：**情緒是「講出來的」而不是「算出來的」** —— 模型一邊講話一邊把情緒標出來，下游只要解析這個標籤就能讓表情同步。這也是為什麼 8 種 emotion 標籤必須在「資料標註 ↔ 模型輸出 ↔ Live2D 表情」三方保持一致。
+
+### 6.9 訓練前後語氣對比
+
+微調帶來的差異，可從幾個面向對照（base = 未微調的通用 Qwen3-4B-Instruct；after = 本專案 qwen3-486）：
+
+| 面向 | 微調前（通用 instruct 模型典型） | 微調後（qwen3-486，實機側錄） |
+| --- | --- | --- |
+| 語言 | 常偏簡體或書面語 | 穩定繁中、台灣口吻 |
+| 長度 | 偏長、愛條列、解釋多 | 2–4 句短回覆，適合語音 |
+| 情緒標籤 | 無 | 開頭自帶 `[joy]`/`[smirk]`/… |
+| 角色感 | 中性、客服感 | 熱血吐槽、自嘲、有戲 |
+| 同題範例<br>「我今天又遲到被罵了」 | （示意）「遲到可能由多種原因造成，建議你檢討時間管理、提早出門，並與主管溝通以避免再次發生……」 | `[smirk]` 原來是個被罵了的人啊……真不巧，這種事我也遇過好多次喔！ |
+
+> 註：左欄「微調前」為通用 instruct 模型的**典型風格示意**（非同題實機側錄）；右欄為 qwen3-486 的**實際輸出**。若需嚴謹的同題 A/B，可載入 base 模型對同一批固定測試題側錄做正式對照（列為後續工作）。
 
 ---
 
@@ -306,6 +366,49 @@ emotion 管線（已驗證）：LLM 輸出 `[joy]` → `extract_emotion` 解析 
 ### 8.4 角色 prompt 定稿
 
 VTuber 端 persona_prompt 採「熱血中二吐槽版」菜月昴：誇張有戲、愛吐槽、自嘲卻死不放棄、對喜歡的人事物超狂熱，關鍵時刻認真可靠；一律繁中、回覆 2–4 句適合語音。
+
+### 8.5 內部執行細節：一次對話在系統內怎麼跑
+
+Open LLM VTuber 是 **FastAPI + WebSocket** 架構，前端（瀏覽器）與 server 之間靠 WebSocket 串訊息。以下是打一句話後，系統內部實際發生的事（訊息型別取自實機 console）：
+
+```
+使用者打字「我今天又遲到被罵了」
+   │ WebSocket 送出
+   ▼
+[server] conversation-chain-start ──► full-text: "Thinking..."
+   │
+   │ ① 呼叫 Ollama（qwen3-486）OpenAI 相容 API，串流回 token
+   │ ② 回覆用 pysbd 斷句，逐句處理（降低首句延遲）
+   ▼
+ 對每一句：
+   ├─ extract_emotion 抽開頭 [emotion] → 表情 index
+   ├─ edge-tts 合成該句 mp3 → pydub(ffmpeg) 轉 wav → base64
+   └─ 打包成 audio payload 送前端：
+        { type:'audio', audio:<base64 wav>, volumes:[...],
+          display_text:{...}, actions:{expressions:[idx]} }
+   ▼
+[前端] 把每個 audio payload 丟進「audio task queue」依序播放：
+   ├─ 播放 wav（喇叭出聲）
+   ├─ 用 volumes 陣列即時驅動 Live2D 嘴型開合（lip-sync）
+   └─ 播該段時套用 actions.expressions → 表情切換
+   ▼
+[server] backend-synth-complete ×N → force-new-message
+       → conversation-chain-end（本輪結束）
+```
+
+**三個引擎各自的內部角色：**
+
+| 引擎 | 實作 | 內部執行重點 |
+| --- | --- | --- |
+| **LLM** | Ollama `qwen3-486`（OpenAI 相容 `/v1/chat/completions`） | server 以串流方式取 token；回覆含 `[emotion]` 前綴與繁中短句 |
+| **TTS** | edge-tts（線上）+ pydub/ffmpeg | **逐句**合成（非整段），第一句一出就開始播以降延遲；mp3→wav 由 ffmpeg 轉檔 |
+| **Live2D** | 前端 `pixi-live2d-display-lipsyncpatch`（Cubism 3–5） | 嘴型由音訊音量(volumes)驅動；表情由 `expressions` 索引套用，**綁在該段音頻播放事件上** |
+
+**幾個關鍵的內部設計，解釋了專案中觀察到的現象：**
+
+- **逐句串流（streaming by sentence）**：LLM 回覆一邊生成一邊斷句、逐句合成播放，所以使用者不必等整段講完 —— 這是 `faster_first_response` + pysbd 的效果。
+- **表情綁音頻**：每段 `expressions` 是掛在那段 audio task 上的。**沒有音頻就沒有 audio task，表情自然不會觸發** —— 這正是階段二「表情不動」與 TTS 缺 ffmpeg「無聲＝無表情」的根本原因（見第 11 節 #8、#9）。
+- **emotion 只在首段**：實機可見只有第一個 audio payload 帶 `actions:{expressions:[idx]}`，其餘段為空 `actions:{}` —— 因為 `[emotion]` 標籤只出現在整段回覆開頭。
 
 ---
 
