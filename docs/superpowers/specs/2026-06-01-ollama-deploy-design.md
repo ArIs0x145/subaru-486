@@ -62,3 +62,15 @@
 - **Windows cp950 console 中文亂碼**：沿用第 ⑤ 步教訓 —— prompt 走 `-f`/UTF-8 檔、`chcp 65001`、curl body 寫成 UTF-8 檔以 `-d @file` 送出；輸出導 UTF-8 檔檢視。非模型問題。
 - **emotion 標籤沒出現或老是 `[fear]`（Runbook §10.7）**：資料集 fear 偏多（53/146）。短期對策：在 Modelfile SYSTEM 補一句「正常情境優先用 `[neutral]` 或 `[joy]`」後 `ollama create` 重建。屬執行時視結果調整，不預先改。
 - **服務未啟動**：Ollama 安裝後以系統服務常駐；若 `/api/tags` 無回應，先 `ollama list` 觸發或確認服務。
+
+## 7. 實際部署結果
+
+- 日期：2026-06-01
+- `ollama list`：`qwen3-486:latest  11323388e3b7  2.5 GB`
+- `ollama create` exit 0、success；Modelfile 未改動（emotion 驗證即通過，無需微調 SYSTEM）。
+- API 驗證（`POST /v1/chat/completions`，以 Python urllib 送收，正確 UTF-8）：
+  - Q「我明天要面試，有點緊張。」→ A `[neutral] 「唔...其實我也不太懂，但總覺得只要誠實面對自己，就能夠克服吧。」`
+  - Q「你好呀，今天過得如何？」→ A `[neutral] 「嗯……今天有點累，不過還好。」`
+  - Q「我剛剛升職了，超開心！」→ A `[surprise] 好嘛，我還以為你被派去當外勤了呢。`
+  - 全部：繁中、2–4 句、開頭帶合理 `[emotion]`、有角色感、未複讀原作/未自稱官方。✅
+- 踩雷：Windows PowerShell 5.1 的 `Invoke-RestMethod` 對未標 charset 的 UTF-8 body 會以 latin1 解碼造成 mojibake（字串進變數時已壞）。改用 Python `urllib` 送收 API 即正確；非模型問題。第 ⑦ 步 VTuber 端為獨立服務，不受此 PowerShell bug 影響。
