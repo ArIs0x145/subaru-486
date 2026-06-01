@@ -12,7 +12,7 @@ def main() -> None:
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=LORA_DIR,
         max_seq_length=1024,
-        load_in_4bit=False,
+        load_in_4bit=True,  # 8GB GPU: load 4-bit (~3GB), unsloth dequantizes to 16-bit on merge
         dtype=None,
     )
     model.save_pretrained_merged(MERGED_DIR, tokenizer, save_method="merged_16bit")
