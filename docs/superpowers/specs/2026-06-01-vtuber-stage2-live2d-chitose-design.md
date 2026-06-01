@@ -104,3 +104,26 @@ chitose model_dict 條目（kScale/位移先沿用合理預設，視畫面再調
 - **資料集 emotion 偏 fear**：模型可能較常輸出 fear（資料 53/146）；本步只驗表情機制能切換，分布平衡屬資料層後續。
 - **其他 Live2D bug**：參考官方文件 https://docs.llmvtuber.com/docs/user-guide/live2d/。
 - **app/ gitignored**：素材、model_dict、conf.yaml 變更皆不進版控；本步唯一版控變更為最後把結果記到 spec。
+
+## 8. 實際結果（階段二）— 部分達成，揭露兩個關鍵限制
+
+日期：2026-06-01。本階段未照原目標（chitose + 表情）完成，但釐清了兩個重要限制，並驗證了 emotion 後端管線。
+
+### 完成 / 驗證
+- chitose 素材複製、model_dict.json 註冊、emotionMap（§4）、conf.yaml 指定，流程本身都正確執行。
+- **emotion 後端管線已用 WebSocket 探針驗證為通**：發正確 UTF-8 中文 → LLM 輸出 `[joy]` → `extract_emotion` 解析成 index → server 送出 `{"actions":{"expressions":[3]}}` 給前端。前端 console 也確認收到 `actions {expressions: Array(1)}`、中文正常。
+
+### 限制一：chitose 是 Cubism 2.x，前端不支援
+- chitose 參數 ID 為 `PARAM_EYE_L_OPEN`（全大寫底線）＝ Cubism 2.x。
+- 官方文件明載：OLV 前端用 `pixi-live2d-display-lipsyncpatch`，**只支援 Cubism 3~5，不支援 Cubism 2**。
+- 故 chitose 雖能載入網格，表情/參數系統不被前端套用。對策：本階段改用內建 `mao_pro`（Cubism 3+，參數 `ParamEyeLOpen` 駝峰）驗證管線。chitose 要用需取得 Cubism 3+ 版本或轉檔（需原始專案檔）。
+
+### 限制二：表情切換依賴音頻播放（需 TTS）
+- 前端把表情綁在 audio task 上（console：`Adding audio task [joy] ... to queue` + `actions {expressions: Array(1)}`）。
+- 本階段尚無 TTS（`audio: null`、`No current audio playing`）＋ 未授權麥克風（`VAD NotAllowedError`），audio task 未實際播放 → 綁在其上的表情未觸發。
+- **結論：Live2D 表情實際依賴 TTS。階段順序應調整為 LLM → TTS → Live2D 表情一起驗。** 下一步先接 TTS（原階段四，edge-tts 輕量不耗 GPU），屆時表情會隨語音播放觸發，一併驗收。
+
+### 本階段對 app/ 的變更（皆 gitignored，不進版控）
+- 複製了 chitose 到 `app/live2d-models/chitose/runtime/`（保留，未來相容版本可用）。
+- `model_dict.json` 仍含 chitose 條目（無害，未被選用）。
+- `conf.yaml` `live2d_model_name` 已改回 `'mao_pro'`。
