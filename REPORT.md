@@ -344,8 +344,8 @@ API（`/v1/chat/completions`）實測：回繁中、2–4 句、帶合理 `[emot
 | --- | --- | --- |
 | 一 | LLM 文字對話（繁中、菜月昴） | ✅ 完成 |
 | 二 | Live2D 表情（emotion 管線） | ✅ 完成（mao_pro） |
-| TTS | 繁中男聲語音輸出（edge-tts） | ✅ 完成 |
-| 三 | ASR 語音輸入（sherpa-onnx） | ⬜ 待做 |
+| 三 | TTS繁中男聲語音輸出（edge-tts） | ✅ 完成 |
+| 四 | ASR 語音輸入（sherpa-onnx） | ✅ 完成 |
 | 驗收 | 五階段體驗驗收 | ⬜ 待做 |
 
 ### 8.1 LLM 串接
@@ -486,18 +486,16 @@ for key in self.emo_map.keys():
 
 ### 9.3 對照規劃驗收標準
 
-對照 [`PROJECT_ARCHITECTURE.md`](PROJECT_ARCHITECTURE.md) §11：模型驗收（繁中穩定、角色語氣明顯、回覆適合 TTS、不複讀長台詞）與 VTuber 驗收（LLM 連線、文字對話、TTS 唸出、Live2D 載入、表情切換）皆已通過；ASR 語音輸入與長時間體驗驗收列為下一步。
+對照 [`PROJECT_ARCHITECTURE.md`](PROJECT_ARCHITECTURE.md) §11：模型驗收（繁中穩定、角色語氣明顯、回覆適合 TTS、不複讀長台詞）與 VTuber 驗收（LLM 連線、文字對話、TTS 唸出、Live2D 載入、表情切換、ASR 語音輸入）皆已通過；長時間體驗驗收列為下一步。
 
 ---
 
 ## 10. 工作日誌（里程碑式）
 
-依 8 步管線分段，對應實際 git 提交時間（2026-05-29 ~ 06-01）。
 
-### 里程碑 ① 規劃（2026-05-29）
+### 里程碑 ① 規劃（2026-05-22）
 - 完成架構文件 `PROJECT_ARCHITECTURE.md`、微調細節 `FINETUNING_DETAIL_REPORT.md`、執行手冊 `EXECUTION_RUNBOOK.md`。
 - 確定路線：Qwen3-4B、QLoRA、Open LLM VTuber、繁中、8GB GPU。
-- 專案遷移到單一根目錄 `D:\AI_486`，對齊 Open LLM VTuber quick-start。
 
 ### 里程碑 ② + ③ 資料與環境（2026-05-29）
 - 資料：163 筆 UTF-8 JSONL 驗證可解碼、切分 146/17。
@@ -527,8 +525,8 @@ for key in self.emo_map.keys():
 - **踩雷（最關鍵）**：首次無聲 —— 真因是**缺 ffmpeg**（pydub 轉 mp3→wav 需要），`winget install Gyan.FFmpeg` 後重啟 server 即通。
 - **踩雷**：預設 persona 是簡體「Mili」角色會覆寫 SYSTEM → 改 conf.yaml persona 為菜月昴＋明確禁簡體。
 
-### 里程碑 ⑧ 驗收（進行中）
-- 已完成 LLM / Live2D / TTS 三項驗收；ASR 與長時間體驗驗收待做。
+### 里程碑 ⑧ 驗收
+- 已完成 LLM / Live2D / TTS / ASR 四項驗收；長時間體驗驗收待做。
 
 ---
 
@@ -558,16 +556,13 @@ for key in self.emo_map.keys():
 ### 12.1 目前限制
 
 - **資料量小且情緒偏態**（fear 偏多）：角色語氣已成立，但情緒分布需平衡。
-- **ASR 尚未驗收**：目前以文字輸入為主，語音輸入（sherpa-onnx）待測。
 - **TTS 為線上服務**：edge-tts 需網路；聲線為通用男聲，非客製。
 - **avatar 暫用 mao_pro**：原訂 chitose 因 Cubism 2.x 不相容，需取得 Cubism 3+ 版本。
-- **conf.yaml 未進版控**（app/ 為 gitignore）：VTuber 端設定重裝會遺失。
 
 ### 12.2 未來工作
 
 | 優先 | 項目 |
 | --- | --- |
-| 高 | 完成 ASR 語音輸入 + 五階段體驗驗收 |
 | 高 | 平衡資料情緒分布，擴充資料量做第二版微調 |
 | 中 | chitose 取得 Cubism 3+ 版本，換上專屬 avatar |
 | 中 | 離線／客製 TTS（GPT-SoVITS / CosyVoice）提升角色聲線 |
