@@ -1,0 +1,19 @@
+services:
+  unsloth:
+    image: unsloth/unsloth
+    container_name: unsloth-env
+    ports:
+      - "8888:8888"
+      - "8000:8000"
+    environment:
+      - JUPYTER_PASSWORD=123456
+    volumes:
+      - ./work:/workspace/work
+      - ./work/studio:/workspace/studio
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
