@@ -108,6 +108,63 @@ ML 腳本常見的問題是「跑一次三小時才發現參數名錯了」。�
 
 ---
 
+## 訓練方法
+
+### 為什麼是 QLoRA，不是全參數微調
+
+| 做法 | 在 8GB VRAM 上 | 在 146 筆資料下 |
+|:--|:--|:--|
+| 全參數微調 | 40 億參數放不下 | 極易過擬合，破壞模型原有的語言能力 |
+| **QLoRA**（本專案） | 基底壓成 4-bit 並凍結，只訓練外掛的低秩矩陣 | 可訓練參數 **不到 1%**，原能力不受損 |
+
+原模型像一本已經印好的書，LoRA 是貼上去的便利貼——只訓練便利貼，書本身完全不動；QLoRA 再把書本身壓成 4-bit，這才是 4B 模型能擠進 8GB 的關鍵。
+
+### 訓練管線
+
+| 步驟 | 做的事 |
+|:--|:--|
+| 1. 載入 4-bit 基底 | `unsloth/Qwen3-4B-Instruct-2507-bnb-4bit`，`load_in_4bit=True` |
+| 2. 外掛 LoRA adapter | 在注意力（q/k/v/o）與 MLP（gate/up/down）共 7 種投影矩陣旁掛上低秩矩陣，並開 Unsloth gradient checkpointing 省 VRAM；原權重全程凍結 |
+| 3. 套用 chat template | 組成 Qwen 認得的對話格式，模板標記由 pytest 驗證 |
+| 4. SFT 監督式微調 | 只更新 LoRA 參數，讓輸出逼近目標語氣 |
+| 5. 存出 adapter | 產物是輕量 LoRA，不是完整模型；合併與量化為後續獨立步驟 |
+
+### 超參數：兩條路線對照
+
+同一批資料、同一張顯卡、同一個基底模型，分別以手寫腳本與 Unsloth Studio 各訓一次（對比報告見 [`studio/`](studio/)）：
+
+| 參數 | Code 版（本 repo 根目錄） | No-Code 版（[`studio/`](studio/)） |
+|:--|:--|:--|
+| LoRA rank / alpha / dropout | 8 / 16 / 0.05 | 16 / 16 / 0 |
+| target modules | q/k/v/o + gate/up/down | 同左 |
+| learning rate | 1e-4 | 2e-4 |
+| scheduler / warmup | cosine / 3% | linear / 5 steps |
+| batch × grad accum（等效） | 1 × 8（8） | 1 × 4（4） |
+| epochs（optimizer steps） | 2（≈38） | 3（111） |
+| optimizer | adamw_8bit | adamw_8bit |
+| max_seq_length | 1024 | 1024 |
+| 精度 / seed | bf16 / 42 | — / 3407 |
+| train_on_completions | — | true |
+
+**規模計算**：146 筆 × 2 epoch ÷ 有效 batch 8 ≈ **38 個 optimizer step**。
+
+資料量小，因此刻意壓低 epoch 與 rank——目標是讓模型養成語氣與情緒標籤的輸出慣性，不是灌入世界觀知識。知識交給 system prompt，兩者職責分開（見上節）。
+
+### 驗證方式
+
+訓練不是「跑完就算」，每個階段都設了檢查點：
+
+| 階段 | 檢查 |
+|:--|:--|
+| 訓練前 | `verify_env.py` 環境閘門（GPU、torch+CUDA、Unsloth）；pytest 驗證 chat template 標記與 SFTConfig 欄位 |
+| 訓練中 | `--smoke` 單步煙霧測試先確認流程可跑，才進完整訓練 |
+| 訓練後 | Ollama API 實測繁中輸出與 `[emotion]` 標籤；瀏覽器端驗收 Live2D 表情與語音是否同步 |
+
+這套順序是踩過坑之後才建立的——`trl` 把參數改名成 `processing_class` 那次，就是靠訓練前的 pytest 在開跑之前擋下來的。
+
+---
+
+
 ## 踩過的雷
 
 真實紀錄，完整版見 [`REPORT.md`](REPORT.md) §11：
